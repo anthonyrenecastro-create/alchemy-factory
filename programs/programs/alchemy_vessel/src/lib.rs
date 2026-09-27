@@ -233,10 +233,7 @@ pub mod alchemy_vessel {
         if ctx.accounts.holding.asset_mint == Pubkey::default() {
             let vessel_key = ctx.accounts.vessel.key();
             let asset_mint_key = ctx.accounts.asset_mint.key();
-            let holding_bump = *ctx
-                .bumps
-                .get("holding")
-                .ok_or(VesselError::MathOverflow)?;
+            let holding_bump = ctx.bumps.holding;
             let holding = &mut ctx.accounts.holding;
             holding.vessel = vessel_key;
             holding.asset_mint = asset_mint_key;
