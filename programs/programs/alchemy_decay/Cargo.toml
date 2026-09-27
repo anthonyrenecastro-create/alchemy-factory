@@ -10,3 +10,6 @@ name = "alchemy_decay"
 [dependencies]
 anchor-lang = "0.31.1"
 anchor-spl = { version = "0.31.1", features = ["token_2022"] }
+
+[features]
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
