@@ -131,7 +131,7 @@ pub mod alchemy_curve {
         config.max_slippage_bps = max_slippage_bps;
         config.reserve_lamports = 0;
         config.total_fees_collected = 0;
-        config.bump = *ctx.bumps.get("curve_config").ok_or(CurveError::MathOverflow)?;
+        config.bump = ctx.bumps.curve_config;
         config.vault_bump = vault_bump;
 
         emit!(CurveInitialized {

@@ -110,7 +110,7 @@ pub mod alchemy_decay {
         config.redemption_allowed_after_expiry = redemption_allowed_after_expiry;
         config.last_decay_ts = now;
         config.total_periods_applied = 0;
-        config.bump = *ctx.bumps.get("decay_config").ok_or(DecayError::MathOverflow)?;
+        config.bump = ctx.bumps.decay_config;
 
         emit!(DecayInitialized {
             mint: config.mint,

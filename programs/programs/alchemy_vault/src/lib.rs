@@ -161,10 +161,7 @@ pub mod alchemy_vault {
         let vault_key = ctx.accounts.vault_config.key();
         let collateral_mint_key = ctx.accounts.collateral_mint.key();
         let authority_key = ctx.accounts.authority.key();
-        let vault_bump = *ctx
-            .bumps
-            .get("vault_config")
-            .ok_or(VaultError::MathOverflow)?;
+        let vault_bump = ctx.bumps.vault_config;
         let vault_seeds: &[&[u8]] = &[b"vault", collateral_mint_key.as_ref(), &[vault_bump]];
 
         // --- Share mint --------------------------------------------------
@@ -803,7 +800,8 @@ fn validate_collateral_mint(mint: &InterfaceAccount<Mint>) -> Result<u8> {
         VaultError::NotToken2022
     );
     let decimals = {
-        let data = mint.to_account_info().try_borrow_data()?;
+        let mint_info = mint.to_account_info();
+        let data = mint_info.try_borrow_data()?;
         let state = spl_token_2022::extension::StateWithExtensions::<
             spl_token_2022::state::Mint,
         >::unpack(&data)

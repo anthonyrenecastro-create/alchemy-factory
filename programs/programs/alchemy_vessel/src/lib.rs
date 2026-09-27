@@ -137,7 +137,7 @@ pub mod alchemy_vessel {
         vessel.deposit_authority = deposit_authority;
         vessel.withdraw_authority = withdraw_authority;
         vessel.asset_count = 0;
-        vessel.bump = *ctx.bumps.get("vessel").ok_or(VesselError::MathOverflow)?;
+        vessel.bump = ctx.bumps.vessel;
 
         emit!(VesselInitialized {
             container_mint: vessel.container_mint,
