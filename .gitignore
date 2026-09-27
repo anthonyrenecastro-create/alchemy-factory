@@ -1,0 +1,26 @@
+# Build outputs, dependencies, secrets — never commit these
+node_modules/
+dist/
+build/
+target/
+.test-ledger/
+anchor/
+.DS_Store
+
+# Anchor / Solana
+programs/.anchor/
+programs/target/
+
+# Secrets and environment
+.env
+.env.local
+*.json.bak
+*_keypair.json
+!programs/tests/fixtures/**
+
+# Keystores (same rule as the signing keystore: secrets stay local, backed up off-machine by the operator)
+*.keystore
+.keystore-pass.txt
+
+# TS build info
+*.tsbuildinfo

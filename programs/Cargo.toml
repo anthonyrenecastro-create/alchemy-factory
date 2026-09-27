@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "programs/alchemy_factory",
+    "programs/alchemy_curve",
+    "programs/alchemy_decay",
+    "programs/alchemy_dynamic",
+    "programs/alchemy_vessel",
+    "programs/alchemy_proofx",
+    "programs/alchemy_vault",
+]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
