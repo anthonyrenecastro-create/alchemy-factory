@@ -49,6 +49,11 @@ jobs:
         # - Pin PARENTS before CHILDREN: zeroize_derive 1.4.2 cannot be
         #   selected while zeroize is still locked at 1.9.0 (it requires
         #   zeroize_derive ^1.5), so zeroize -> 1.8.1 must land first.
+        # - 2026-09-27, run 36319829259: build named hashbrown 0.17.1 as
+        #   edition2024. It comes via indexmap 2.14.x (requires hashbrown
+        #   ^0.17). Fix: pin indexmap -> 2.13.1 (edition 2021, requires
+        #   hashbrown ^0.16.1) and hashbrown -> 0.16.1 (edition 2021).
+        #   indexmap 2.13.1 still satisfies toml_edit's ^2.13.0 / ^2 reqs.
         working-directory: programs
         run: |
           cargo generate-lockfile
@@ -67,6 +72,8 @@ jobs:
           }
           pin_one proc-macro-crate 3.2.0
           pin_one blake3 1.5.5
+          pin_one indexmap 2.13.1
+          pin_one hashbrown 0.16.1
           pin_one unicode-segmentation 1.12.0
           pin_one zeroize 1.8.1
           pin_one zeroize_derive 1.4.2
