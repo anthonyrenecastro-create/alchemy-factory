@@ -27,6 +27,32 @@ jobs:
       - name: Install JS deps
         working-directory: programs
         run: npm ci
+      - name: Pin deps for SBF toolchain
+        # cargo-build-sbf uses the Solana platform-tools cargo (1.79), which
+        # cannot parse edition2024 manifests. crates.io keeps releasing such
+        # crates, and with no committed Cargo.lock a fresh resolve picks them
+        # up and the build dies during resolution. So: resolve with the modern
+        # host cargo, then pin the known offenders DOWN to pre-edition2024
+        # versions before anchor build. If a future resolve pulls a NEW
+        # edition2024 crate, the build error names it; add another pin here.
+        working-directory: programs
+        run: |
+          cargo generate-lockfile
+          for pin in \
+            "blake3:1.5.5" \
+            "indexmap:2.7.1" \
+            "proc-macro-crate:3.2.0" \
+            "unicode-segmentation:1.12.0" \
+            "zeroize_derive:1.4.2" \
+            "zeroize:1.8.1" \
+          ; do
+            pkg="${pin%%:*}"; ver="${pin##*:}"
+            if cargo tree -p "$pkg" --depth 0 >/dev/null 2>&1; then
+              cargo update -p "$pkg" --precise "$ver"
+            else
+              echo "not in dependency graph, skipping pin: $pkg"
+            fi
+          done
       - name: Build programs
         working-directory: programs
         run: anchor build
