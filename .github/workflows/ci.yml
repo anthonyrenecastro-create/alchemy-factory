@@ -26,7 +26,7 @@ jobs:
           avm use 0.31.1
       - name: Install JS deps
         working-directory: programs
-        run: npm install
+        run: npm ci
       - name: Build programs
         working-directory: programs
         run: anchor build
