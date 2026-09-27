@@ -9,4 +9,8 @@ name = "alchemy_vault"
 
 [dependencies]
 anchor-lang = "0.31.1"
-anchor-spl = { version = "0.31.1", features = ["token_2022"] }
+# token_2022_extensions is needed ONLY by alchemy_vault: it re-exports
+# spl_token_metadata_interface + spl_pod, used to build the share mint's
+# metadata-only (MetadataPointer + TokenMetadata) extensions. No other
+# program enables it.
+anchor-spl = { version = "0.31.1", features = ["token_2022", "token_2022_extensions"] }

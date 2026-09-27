@@ -4,6 +4,7 @@ import { Studio } from './pages/Studio';
 import { Holder } from './pages/Holder';
 import { TokenDetail } from './pages/TokenDetail';
 import { Jubilee } from './pages/Jubilee';
+import { Vault } from './pages/Vault';
 
 function Home() {
   return (
@@ -36,6 +37,13 @@ function Home() {
             <p>Illustrative model: a mock-gold-collateralized token whose redeemable claim decreases 1%/month to a named treasury. Exact arithmetic, holder outcomes, failure cases.</p>
           </div>
         </NavLink>
+        <NavLink to="/vault" style={{ color: 'inherit' }}>
+          <div className="card mechanic-card">
+            <div className="icon">🏦</div>
+            <h3>Vault simulator</h3>
+            <p>Try the stage-3 collateral vault model: deposit MOCK-GOLD for pro-rata shares, redeem with fees and withdrawal limits, watch the collateral ratio, and inspect what the proof account publishes. Simulation only.</p>
+          </div>
+        </NavLink>
       </div>
       <div className="card mt">
         <h3 style={{ marginTop: 0 }}>What runs where</h3>
@@ -57,6 +65,7 @@ export function App() {
           <span className="brand"><span className="alchemy">⚗ ALCHEMY</span> FACTORY</span>
           <NavLink className="navlink" to="/studio">Studio</NavLink>
           <NavLink className="navlink" to="/holder">Holder</NavLink>
+          <NavLink className="navlink" to="/vault">Vault</NavLink>
           <NavLink className="navlink" to="/jubilee">Jubilee</NavLink>
           <span className="spacer" />
           <span className="rpc-badge mono" title="RPC endpoint (no API keys in the bundle)">
@@ -68,6 +77,7 @@ export function App() {
           <Route path="/studio" element={<Studio />} />
           <Route path="/holder" element={<Holder />} />
           <Route path="/holder/:mint" element={<TokenDetail />} />
+          <Route path="/vault" element={<Vault />} />
           <Route path="/jubilee" element={<Jubilee />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

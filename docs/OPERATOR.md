@@ -121,6 +121,45 @@ go-ahead — no exceptions.
   freeze/upgrade/permanent-delegate authorities and the 430-PAXG
   physical-redemption minimum.
 
+## Vault (stage 3) operator notes
+
+- **MOCK-GOLD devnet setup.** Create the collateral mint as a Token-2022
+  mint with **metadata-only extensions** (`metadata-pointer` +
+  `token-metadata`) — no permanent delegate, no transfer fees, no frozen
+  defaults, no confidential-transfer configs. Name/symbol the mint
+  unmistakably, e.g. `MOCK-GOLD — NOT PAXG, NO VALUE`. Faucet-mint units for
+  deposit/redeem exercises. Keep the mint address in your local operator
+  notes — never in the repo, and **never on mainnet**: MOCK-GOLD must never
+  appear on mainnet, and no devnet token may ever be labeled "PAXG".
+- **Collateral mint policy.** The stage-3 `alchemy_vault` program allow-lists
+  metadata-only collateral mints. The real PAXG mint's extension shape
+  (permanent delegate + confidential transfers + mint close authority) is
+  **rejected** in stage 3 — do not attempt to register it, and do not confuse
+  any devnet mint with the Paxos-issued asset.
+- **Proof accounts.** `publish_proof` writes a read-only `VaultProof`
+  snapshot: `vault` (the config account), `total_collateral` (vault token
+  account balance at publish time), `outstanding_claims` (shares converted at
+  the current ratio), `collateral_ratio_bps`
+  (`total_collateral * 10000 / outstanding_claims`, `u64::MAX` when no claims
+  exist — a "no claims" sentinel, not infinite collateral),
+  `authority`, `treasury`, `is_mock_collateral`, `published_ts`. Anyone can
+  recompute the ratio from the vault token account balance and the share
+  mint's supply — a proof is a signed snapshot, never a promise of future
+  value, yield, or a price floor.
+- **Withdrawal limits.** Per-redemption cap in bps:
+  `gross <= floor(total_collateral * withdrawal_limit_bps / 10000)` or the
+  redeem is rejected (`WithdrawalLimitExceeded`). The cap floors, so it never
+  rounds past the configured bps. `10000` bps = effectively no limit; lower
+  values stage exits and preserve solvency for remaining holders.
+- **Program keypair backup.** `programs/target/deploy/alchemy_vault-keypair.json`
+  is gitignored and must be backed up off-machine before any deploy —
+  losing it means losing the ability to upgrade the program.
+- **No devnet deploy without Zebulon's explicit approval.** The vault program
+  is UNVERIFIED until both gates pass: (1) CI `anchor build` + `anchor test`
+  green on the exact commit, (2) the program deployed to devnet with a real
+  end-to-end devnet transaction succeeding. Until then, use the SDK/holder
+  simulators only.
+
 ## Secrets
 
 - `.env`, `.keys/`, keystores: gitignored, stay on the operator's machine.

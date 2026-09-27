@@ -6,7 +6,7 @@
  * on-chain config accounts defined in `programs/` but carry no authority.
  */
 
-export type MechanicKind = 'dynamic' | 'decay' | 'vessel' | 'curve' | 'proofx';
+export type MechanicKind = 'dynamic' | 'decay' | 'vessel' | 'curve' | 'proofx' | 'vault';
 
 export const MECHANIC_LABELS: Record<MechanicKind, string> = {
   dynamic: 'Dynamic & evolving',
@@ -14,6 +14,7 @@ export const MECHANIC_LABELS: Record<MechanicKind, string> = {
   vessel: 'Hierarchical & nested',
   curve: 'Bonding-curve native',
   proofx: 'Proof of X',
+  vault: 'Collateral vault',
 };
 
 /**

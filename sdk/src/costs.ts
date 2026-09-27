@@ -51,6 +51,13 @@ const MECHANIC_ACCOUNTS: Record<MechanicKind, { label: string; bytes: number }[]
     { label: 'Nonce registry account', bytes: 2048 },
     { label: 'Revocation registry account', bytes: 512 },
   ],
+  // VaultConfig::SPACE (224) + VaultProof::SPACE (137) per the on-chain structs.
+  vault: [
+    { label: 'Vault config account', bytes: 224 },
+    { label: 'Vault proof account', bytes: 137 },
+    { label: 'Share mint', bytes: 82 },
+    { label: 'Vault collateral token account', bytes: 165 },
+  ],
 };
 
 /** Estimated signatures (transactions) per mechanic setup flow. */
@@ -60,6 +67,7 @@ const MECHANIC_TX_COUNT: Record<MechanicKind, number> = {
   dynamic: 6,
   vessel: 7,
   proofx: 8,
+  vault: 9,
 };
 
 export function formatSol(lamports: bigint): string {

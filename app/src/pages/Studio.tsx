@@ -14,6 +14,9 @@ import {
   estimateExperimentCost,
   recommendExtensions, checkCompatibility,
   type CompatFinding,
+  simulateDeposit, simulateRedeem, withdrawalLimitAmount, collateralRatioBps,
+  validateVaultConfig, U64_MAX,
+  type VaultState,
   type MechanicKind, type HolderRight, type CompatibilityWarning, type ExperimentConfig,
 } from '@sdk';
 import { HonestyBanner } from '../components/HonestyBanner';
@@ -24,6 +27,7 @@ const MECHANICS: { kind: MechanicKind; icon: string; blurb: string }[] = [
   { kind: 'dynamic', icon: '🔮', blurb: 'Supply/metadata follows authenticated oracle data. Stale-data behavior is disclosed, never hidden.' },
   { kind: 'vessel', icon: '🏺', blurb: 'A transferable container over a defined asset set. Ownership transfer moves the whole basket.' },
   { kind: 'proofx', icon: '🎖️', blurb: 'Mint from a verifiable attestation with replay prevention and revocation. Manual approval is never called automatic.' },
+  { kind: 'vault', icon: '🏦', blurb: 'Segregated collateral vault: share accounting, withdrawal limits, proof accounts. Devnet collateral is MOCK-GOLD only — never PAXG.' },
 ];
 
 const bi = (s: string): bigint | null => {
@@ -43,6 +47,7 @@ interface DecayForm { expiresAt: string; periodDays: string; rateBps: string; re
 interface DynamicForm { oracleId: string; updateAuthority: string; maxSupply: string; maxAgeSec: string; minIntervalSec: string; staleBehavior: 'freeze-transfers' | 'use-last-value' | 'reject-new-updates'; scale: string; }
 interface VesselForm { custodyProgram: string; depositAuthority: string; withdrawAuthority: string; }
 interface ProofXForm { verifier: string; evidenceFormat: string; automatic: boolean; disputeProcess: string; privacyTreatment: string; }
+interface VaultForm { withdrawalLimitBps: string; redeemFeeBps: string; mockLabel: string; }
 
 const DEFAULTS = {
   curve: { template: 'linear', basePrice: '1000', slope: '2', feeBps: '30', steps: '1000000:10, 5000000:25, 20000000:60' } as CurveForm,
@@ -50,6 +55,7 @@ const DEFAULTS = {
   dynamic: { oracleId: 'pyth:SOL/USD', updateAuthority: '', maxSupply: '1000000', maxAgeSec: '300', minIntervalSec: '60', staleBehavior: 'freeze-transfers', scale: '10' } as DynamicForm,
   vessel: { custodyProgram: 'vessel-custody-program', depositAuthority: 'demo-owner', withdrawAuthority: 'demo-owner' } as VesselForm,
   proofx: { verifier: '', evidenceFormat: 'sha256-of-signed-completion-certificate', automatic: false, disputeProcess: 'Email disputes with your evidence hash; reviewed within 14 days.', privacyTreatment: 'Only the evidence hash is stored on-chain; raw evidence stays off-chain.' } as ProofXForm,
+  vault: { withdrawalLimitBps: '1000', redeemFeeBps: '30', mockLabel: 'MOCK-GOLD — NOT PAXG, NO VALUE' } as VaultForm,
 };
 
 interface AuthorityForm { mintAuthority: string; permanentDelegate: boolean; transferHook: boolean; extensions: string[]; }
@@ -169,6 +175,9 @@ function compatibilityWarnings(exp: ExperimentConfig, mechanic: MechanicKind): C
   if (mechanic === 'dynamic') {
     w.push({ severity: 'warning', code: 'ORACLE_TRUST', message: 'Off-chain oracle data is not decentralized merely because its result is written on-chain. Holders trust the feed and the update authority.' });
   }
+  if (mechanic === 'vault') {
+    w.push({ severity: 'warning', code: 'VAULT_UNVERIFIED', message: 'The vault program is UNVERIFIED: not deployed to devnet and no end-to-end devnet transaction has succeeded. Devnet collateral must be MOCK-GOLD (metadata-only extensions); the program rejects the real PAXG mint\u2019s extension shape (permanent delegate) in stage 3.' });
+  }
   return w;
 }
 
@@ -213,6 +222,15 @@ function holderRights(mechanic: MechanicKind, forms: typeof DEFAULTS): HolderRig
         { title: 'Replay protection', description: 'Each attestation carries a one-time nonce. Replaying it is rejected — one attestation, one mint.' },
         { title: f.automatic ? 'Automatic verification' : 'Manual approval', description: verificationModeDescription(buildProofXConfig(f)) },
         { title: 'Revocation', description: 'The revocation authority can revoke attestations; revoked attestations can never mint.' },
+      ];
+    }
+    case 'vault': {
+      const f = forms.vault;
+      return [
+        { title: 'Pro-rata claims, not a promised price', description: `Shares represent a pro-rata claim on the vault's collateral; the redeemable value tracks the vault's actual holdings, never a guaranteed gold price or floor.` },
+        { title: 'Fees and limits', description: `Redemptions pay a ${f.redeemFeeBps} bps fee (rounded up) and each redemption is capped at ${f.withdrawalLimitBps} bps of the vault — the limit protects solvency for remaining holders.` },
+        { title: 'Proof you can recompute', description: 'The vault publishes a read-only proof account (balance, liabilities, ratio, authorities). Anyone can recompute the ratio from public chain state; the proof is a snapshot, not a guarantee of future value.' },
+        { title: 'Mock collateral only (devnet)', description: `Devnet collateral is ${f.mockLabel} — no gold backing, no redemption value, never labeled PAXG. Real PAXG integration is gated separately (see docs/STAGES.md).` },
       ];
     }
     default: {
@@ -495,6 +513,19 @@ export function Studio() {
             <div key={w.code} className={`warn${w.severity === 'blocking' ? ' blocking' : ''}`}><span className="sev">{w.severity}</span><br />{w.message}</div>
           ))}
           {warnings.filter((w) => w.severity !== 'info').length === 0 && <p className="muted small">No warnings or blockers.</p>}
+
+          {mechanic === 'vault' && (
+            <div className="warn blocking">
+              <span className="sev">Vault review notes</span><br />
+              Collateral mint must be <strong>MOCK-GOLD</strong> on devnet — a metadata-only Token-2022 mint labeled
+              unmistakably (e.g. "MOCK-GOLD — NOT PAXG, NO VALUE"). It must never appear on mainnet, and no devnet
+              token may be labeled PAXG. The on-chain program allow-lists metadata-only collateral mints and rejects
+              the real PAXG mint's extension shape (permanent delegate) in stage 3. Real PAXG integration stays
+              gated on direct Paxos confirmation plus a threat model covering the mint's permanent delegate,
+              freeze/upgrade authorities, and the 430-PAXG physical-redemption minimum.
+            </div>
+          )}
+
           <div className="row mt">
             <button className="btn ghost" onClick={() => setStep(2)}>← Back</button>
             <button className="btn primary" disabled={deployBlocked} onClick={() => { setDeployNote(''); setDeployOpen(true); }}>Deploy to devnet</button>
@@ -624,6 +655,18 @@ function SimpleForm({ mechanic, forms, setForm }: {
         </>
       );
     }
+    case 'vault': {
+      const f = forms.vault;
+      return (
+        <>
+          <div className="row">
+            <div className="field" style={{ flex: 1 }}><label>Withdrawal limit (bps)</label><input value={f.withdrawalLimitBps} onChange={(e) => setForm('vault', { withdrawalLimitBps: e.target.value })} inputMode="numeric" /><span className="hint">10000 bps = effectively no limit (the cap floors at the full balance). Lower values stage exits and protect solvency.</span></div>
+            <div className="field" style={{ flex: 1 }}><label>Redemption fee (bps)</label><input value={f.redeemFeeBps} onChange={(e) => setForm('vault', { redeemFeeBps: e.target.value })} inputMode="numeric" /><span className="hint">Rounded up on every redemption.</span></div>
+          </div>
+          <div className="field"><label>Mock collateral label</label><input className="mono" value={f.mockLabel} onChange={(e) => setForm('vault', { mockLabel: e.target.value })} /><span className="hint">Must make the mock nature unmistakable (e.g. "MOCK-GOLD — NOT PAXG, NO VALUE"). Devnet collateral must be MOCK-GOLD; the stage-3 program allow-lists metadata-only collateral mints and rejects the real PAXG mint's extension shape (permanent delegate). Never label any devnet token PAXG.</span></div>
+        </>
+      );
+    }
   }
 }
 
@@ -640,6 +683,7 @@ function SimPanel({ mechanic, forms }: { mechanic: MechanicKind; forms: typeof D
       {mechanic === 'dynamic' && <DynamicSim form={forms.dynamic} />}
       {mechanic === 'vessel' && <VesselSim form={forms.vessel} />}
       {mechanic === 'proofx' && <ProofXSim form={forms.proofx} />}
+      {mechanic === 'vault' && <VaultSim form={forms.vault} />}
     </div>
   );
 }
@@ -902,6 +946,59 @@ function ProofXSim({ form }: { form: ProofXForm }) {
       <table className="data"><thead><tr><th>Attestation</th><th>Subject</th><th className="num">Amount</th></tr></thead>
         <tbody>{state.minted.map((m, i) => <tr key={i}><td className="mono">{m.attestationId}</td><td className="mono">{m.subject}</td><td className="num mono">{m.amount.toString()}</td></tr>)}</tbody>
       </table>
+    </div>
+  );
+}
+
+function VaultSim({ form }: { form: VaultForm }) {
+  const lb = parseInt(form.withdrawalLimitBps, 10);
+  const fb = parseInt(form.redeemFeeBps, 10);
+  const configOk = (() => { try { validateVaultConfig(lb, fb); return true; } catch { return false; } })();
+  const [state, setState] = useState<VaultState>(() => ({
+    totalCollateral: 1_000_000n,
+    totalShares: 1_000_000n,
+    withdrawalLimitBps: Number.isInteger(lb) ? lb : 0,
+    redeemFeeBps: Number.isInteger(fb) ? fb : 0,
+  }));
+  const [depAmt, setDepAmt] = useState('10000');
+  const [rdmAmt, setRdmAmt] = useState('5000');
+  const [err, setErr] = useState('');
+
+  // Keep the simulated fee/limit in sync with the form when the config is valid.
+  const cfgKey = `${lb}:${fb}:${configOk}`;
+  const [seenKey, setSeenKey] = useState(cfgKey);
+  if (cfgKey !== seenKey) {
+    setSeenKey(cfgKey);
+    if (configOk) setState((s) => ({ ...s, withdrawalLimitBps: lb, redeemFeeBps: fb }));
+  }
+
+  const act = (fn: () => VaultState) => {
+    try { setState(fn()); setErr(''); } catch (e) { setErr((e as Error).message); }
+  };
+
+  if (!configOk) return <div className="warn blocking"><span className="sev">Config error</span><br />Withdrawal limit and fee must be integers 0–10000 bps.</div>;
+
+  const limit = withdrawalLimitAmount(state);
+  const ratio = collateralRatioBps(state.totalCollateral, state.totalShares);
+
+  return (
+    <div>
+      {err && <div className="warn blocking"><span className="sev">Rejected</span><br />{err}</div>}
+      <p className="small">State: collateral <span className="mono">{state.totalCollateral.toString()}</span> · shares <span className="mono">{state.totalShares.toString()}</span> · limit <span className="mono">{state.withdrawalLimitBps} bps</span> (cap <span className="mono">{limit.toString()}</span> units/redemption) · fee <span className="mono">{state.redeemFeeBps} bps</span> · ratio <span className="mono">{ratio === U64_MAX ? 'u64::MAX (no claims)' : `${ratio.toString()} bps`}</span></p>
+      <div className="grid cols-2">
+        <div>
+          <div className="field"><label>Deposit amount (collateral base units)</label><input value={depAmt} onChange={(e) => setDepAmt(e.target.value)} inputMode="numeric" /></div>
+          <button className="btn" onClick={() => { const a = bi(depAmt); if (a !== null) act(() => simulateDeposit(state, a).newState); }}>Deposit (simulation)</button>
+          <p className="muted small">Shares mint floored pro-rata (1:1 on first deposit); dust is rejected.</p>
+        </div>
+        <div>
+          <div className="field"><label>Shares to redeem</label><input value={rdmAmt} onChange={(e) => setRdmAmt(e.target.value)} inputMode="numeric" /></div>
+          <button className="btn" onClick={() => { const s = bi(rdmAmt); if (s !== null) act(() => simulateRedeem(state, s).newState); }}>Redeem (simulation)</button>
+          <p className="muted small">Gross floors in the vault's favor; fee rounds up; redemptions above the cap are rejected.</p>
+        </div>
+      </div>
+      <p className="muted small">Collateral here is {form.mockLabel} — no gold backing, no redemption value, devnet only, never labeled PAXG.</p>
+      <button className="btn ghost mt" onClick={() => setState({ totalCollateral: 1_000_000n, totalShares: 1_000_000n, withdrawalLimitBps: lb, redeemFeeBps: fb })}>Reset simulation state</button>
     </div>
   );
 }

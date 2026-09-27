@@ -58,6 +58,17 @@ export function Holder() {
         )}
       </div>
 
+      <h2 className="section-title">Vault simulator <span className="badge sim">simulation</span></h2>
+      <Link to="/vault" style={{ color: 'inherit' }}>
+        <div className="card mechanic-card">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <strong>🏦 Collateral vault</strong>
+            <span className="badge sim">Simulation</span>
+          </div>
+          <p className="small">Deposit MOCK-GOLD for pro-rata shares, redeem with fees and withdrawal limits, and inspect the proof account — all in the deterministic simulator. No wallet, no chain.</p>
+        </div>
+      </Link>
+
       <h2 className="section-title">Discover <span className="badge sample">sample data</span></h2>
       <div className="grid cols-3">
         {SAMPLE_TOKENS.map((t) => (
