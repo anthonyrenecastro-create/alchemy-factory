@@ -848,12 +848,15 @@ pub struct InitializeVault<'info> {
     /// The collateral mint (real PAXG only after Paxos verification in
     /// Stage 4; mock on devnet). Must pass the extension allow-list.
     pub collateral_mint: InterfaceAccount<'info, Mint>,
-    /// Share mint PDA `[b"vault-shares", vault]`; created in the
+    /// CHECK: Share mint PDA `[b"vault-shares", vault]`; created in the
     /// instruction body (Token-2022, MetadataPointer + TokenMetadata only).
+    /// The PDA is derived and asserted with find_program_address before
+    /// creation, so no type-level check is needed.
     #[account(mut)]
     pub share_mint: UncheckedAccount<'info>,
-    /// Vault's collateral token account PDA `[b"vault-collateral", vault]`,
-    /// owned by the vault PDA; created in the instruction body.
+    /// CHECK: Vault's collateral token account PDA `[b"vault-collateral", vault]`,
+    /// owned by the vault PDA; created in the instruction body. The PDA is
+    /// derived and asserted with find_program_address before use.
     #[account(mut)]
     pub vault_collateral_account: UncheckedAccount<'info>,
     pub token_program: Interface<'info, TokenInterface>,
