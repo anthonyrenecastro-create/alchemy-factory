@@ -9,4 +9,4 @@ name = "alchemy_dynamic"
 
 [dependencies]
 anchor-lang = "0.31.1"
-anchor-spl = { version = "0.31.1", features = ["token-2022"] }
+anchor-spl = { version = "0.31.1", features = ["token_2022"] }
