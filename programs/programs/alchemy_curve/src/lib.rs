@@ -58,7 +58,7 @@ use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface};
 mod math;
 use math::{buy_cost, ceil_div, fee_for, impact_bps, sell_proceeds, spot_price, validate_curve};
 
-declare_id!("ALCHcurve111111111111111111111111111111111");
+declare_id!("6fFjhEQx73RZ5sYJLtsyWo53ZDgvfV4YokLdrLh2DPDL");
 
 /// Fixed-point scale for the linear curve: `price(s) = intercept + slope * s / PRICE_SCALE`.
 pub const PRICE_SCALE: u128 = 1_000_000_000;

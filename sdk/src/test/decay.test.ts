@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   balanceAt, canTransfer, canRedeem, decaySchedule, recipientOfRemovedValue,
-  validateDecayConfig, type DecayConfig,
+  validateDecayConfig, periodsElapsed, type DecayConfig,
 } from '../decay.js';
 
 const cfg: DecayConfig = {
@@ -52,5 +52,57 @@ describe('expiry rules', () => {
 
   it('redemption allowed after expiry when configured', () => {
     assert.equal(canRedeem(cfg.expiresAt + 1, cfg).allowed, true);
+  });
+});
+
+describe('periodsElapsed (on-chain parity with apply_decay)', () => {
+  // Mirrors: periods = floor((min(now, expiry) - lastDecay) / periodSeconds), clamped at 0.
+  const LAST = 1_000_000;
+  const PERIOD = 100;
+  const EXPIRY = 1_010_000;
+
+  it('now < lastDecayTs clamps to 0 (on-chain: DecayNotDue)', () => {
+    assert.equal(periodsElapsed(LAST, LAST - 1, PERIOD, EXPIRY), 0);
+    assert.equal(periodsElapsed(LAST, LAST - 10_000, PERIOD, EXPIRY), 0);
+  });
+
+  it('now == lastDecayTs yields 0', () => {
+    assert.equal(periodsElapsed(LAST, LAST, PERIOD, EXPIRY), 0);
+  });
+
+  it('partial period yields 0; exact boundaries count fully', () => {
+    assert.equal(periodsElapsed(LAST, LAST + 99, PERIOD, EXPIRY), 0);
+    assert.equal(periodsElapsed(LAST, LAST + 100, PERIOD, EXPIRY), 1);
+    assert.equal(periodsElapsed(LAST, LAST + 199, PERIOD, EXPIRY), 1);
+    assert.equal(periodsElapsed(LAST, LAST + 200, PERIOD, EXPIRY), 2);
+    assert.equal(periodsElapsed(LAST, LAST + 1000, PERIOD, EXPIRY), 10);
+  });
+
+  it('now > expiryTs is capped at expiryTs', () => {
+    // (EXPIRY - LAST) / PERIOD = 10_000 / 100 = 100, no matter how far past expiry now is.
+    assert.equal(periodsElapsed(LAST, EXPIRY + 1, PERIOD, EXPIRY), 100);
+    assert.equal(periodsElapsed(LAST, EXPIRY + 1_000_000, PERIOD, EXPIRY), 100);
+    // Expiry mid-period truncates: floor((1_009_950 - 1_000_000) / 100) = 99.
+    assert.equal(periodsElapsed(LAST, EXPIRY + 500, PERIOD, EXPIRY - 50), 99);
+  });
+
+  it('expiry before lastDecayTs is a negative numerator, clamped to 0', () => {
+    assert.equal(periodsElapsed(LAST, LAST + 50, PERIOD, LAST - 1), 0);
+  });
+
+  it('zero or negative periodSeconds returns 0 (rejected at init on-chain)', () => {
+    assert.equal(periodsElapsed(LAST, LAST + 10_000, 0, EXPIRY), 0);
+    assert.equal(periodsElapsed(LAST, LAST + 10_000, -5, EXPIRY), 0);
+  });
+
+  it('agrees with balanceAt period counting on sample points', () => {
+    // balanceAt floors the same (toTime - fromTime) / periodSeconds when uncapped:
+    // a partial 7-second tail adds no period, so both calls must agree.
+    const p = periodsElapsed(0, 5 * cfg.decayPeriodSeconds + 7, cfg.decayPeriodSeconds, cfg.expiresAt);
+    assert.equal(p, 5);
+    assert.equal(
+      balanceAt(1000n, 0, 5 * cfg.decayPeriodSeconds + 7, cfg),
+      balanceAt(1000n, 0, 5 * cfg.decayPeriodSeconds, cfg),
+    );
   });
 });

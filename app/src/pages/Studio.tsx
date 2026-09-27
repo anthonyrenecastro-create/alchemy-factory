@@ -8,10 +8,12 @@ import {
   createDynamicState, appendUpdate, evaluateStaleness, isStale,
   type DynamicConfig,
   createVesselState, deposit, withdraw, transferOwnership,
-  type VesselConfig, type VesselPermission,
+  type VesselConfig,
   createProofXState, mintFromAttestation, revokeAttestation, verificationModeDescription,
   type ProofXConfig, type Attestation,
   estimateExperimentCost,
+  recommendExtensions, checkCompatibility,
+  type CompatFinding,
   type MechanicKind, type HolderRight, type CompatibilityWarning, type ExperimentConfig,
 } from '@sdk';
 import { HonestyBanner } from '../components/HonestyBanner';
@@ -39,14 +41,14 @@ const bi = (s: string): bigint | null => {
 interface CurveForm { template: 'linear' | 'step'; basePrice: string; slope: string; feeBps: string; steps: string; }
 interface DecayForm { expiresAt: string; periodDays: string; rateBps: string; recipient: string; transfersAfter: boolean; redeemAfter: boolean; }
 interface DynamicForm { oracleId: string; updateAuthority: string; maxSupply: string; maxAgeSec: string; minIntervalSec: string; staleBehavior: 'freeze-transfers' | 'use-last-value' | 'reject-new-updates'; scale: string; }
-interface VesselForm { custodyProgram: string; depositPermission: VesselPermission; withdrawPermission: VesselPermission; }
+interface VesselForm { custodyProgram: string; depositAuthority: string; withdrawAuthority: string; }
 interface ProofXForm { verifier: string; evidenceFormat: string; automatic: boolean; disputeProcess: string; privacyTreatment: string; }
 
 const DEFAULTS = {
   curve: { template: 'linear', basePrice: '1000', slope: '2', feeBps: '30', steps: '1000000:10, 5000000:25, 20000000:60' } as CurveForm,
   decay: { expiresAt: '2027-09-27', periodDays: '30', rateBps: '500', recipient: 'creator-treasury', transfersAfter: false, redeemAfter: true } as DecayForm,
   dynamic: { oracleId: 'pyth:SOL/USD', updateAuthority: '', maxSupply: '1000000', maxAgeSec: '300', minIntervalSec: '60', staleBehavior: 'freeze-transfers', scale: '10' } as DynamicForm,
-  vessel: { custodyProgram: 'vessel-custody-program', depositPermission: 'open', withdrawPermission: 'owner-only' } as VesselForm,
+  vessel: { custodyProgram: 'vessel-custody-program', depositAuthority: 'demo-owner', withdrawAuthority: 'demo-owner' } as VesselForm,
   proofx: { verifier: '', evidenceFormat: 'sha256-of-signed-completion-certificate', automatic: false, disputeProcess: 'Email disputes with your evidence hash; reviewed within 14 days.', privacyTreatment: 'Only the evidence hash is stored on-chain; raw evidence stays off-chain.' } as ProofXForm,
 };
 
@@ -95,10 +97,9 @@ function buildDynamicConfig(f: DynamicForm): DynamicConfig {
 function buildVesselConfig(f: VesselForm): VesselConfig {
   return {
     custodyProgram: f.custodyProgram,
-    depositPermission: f.depositPermission,
-    withdrawPermission: f.withdrawPermission,
-    authorizedDepositors: [],
-    authorizedWithdrawers: [],
+    // Blank fields fall back to the demo owner key (simulation default, disclosed in the form hint).
+    depositAuthority: f.depositAuthority.trim() || 'demo-owner',
+    withdrawAuthority: f.withdrawAuthority.trim() || 'demo-owner',
   };
 }
 
@@ -112,6 +113,17 @@ function buildProofXConfig(f: ProofXForm): ProofXConfig {
     privacyTreatment: f.privacyTreatment,
     automatic: f.automatic,
   };
+}
+
+/**
+ * Derive the "I understand that ..." acknowledgment statement shown next to a
+ * red finding's checkbox. The statement is derived from the SDK finding's own
+ * title so it stays in sync with the research-backed checker.
+ */
+function ackStatement(f: CompatFinding): string {
+  const t = f.title.replace(/^(Hard warning|Escalated hard warning|Protocol-invalid|Protocol-suspect):\s*/i, '');
+  const lowered = t.charAt(0).toLowerCase() + t.slice(1);
+  return `I understand that ${lowered} — I accept this consequence for this devnet experiment.`;
 }
 
 function buildExperiment(name: string, symbol: string, decimals: string, mechanic: MechanicKind, auth: AuthorityForm): ExperimentConfig {
@@ -191,7 +203,7 @@ function holderRights(mechanic: MechanicKind, forms: typeof DEFAULTS): HolderRig
       return [
         { title: 'You own a container', description: 'The token represents a claim on the vessel\u2019s holdings ledger, custodied by the vessel program.' },
         { title: 'Transfers move the whole basket', description: 'Sending the token transfers every holding and the permission rules to the new owner. The previous owner keeps nothing.' },
-        { title: 'Permissions', description: `Deposits: ${f.depositPermission}. Withdrawals: ${f.withdrawPermission}.` },
+        { title: 'Permissions', description: `Deposits: only ${f.depositAuthority.trim() || 'demo-owner'} (deposit authority). Withdrawals: only ${f.withdrawAuthority.trim() || 'demo-owner'} (withdraw authority). Neither role rotates on ownership transfer.` },
       ];
     }
     case 'proofx': {
@@ -229,6 +241,8 @@ export function Studio() {
   const [deployNote, setDeployNote] = useState('');
   const [mainnetPhrase, setMainnetPhrase] = useState('');
   const MAINNET_PHRASE = 'I UNDERSTAND MAINNET IS IRREVERSIBLE';
+  /** Subjects of red compatibility findings the creator has explicitly acknowledged. */
+  const [ackedFindings, setAckedFindings] = useState<string[]>([]);
 
   const setForm = <K extends MechanicKind>(k: K, patch: Partial<(typeof DEFAULTS)[K]>) =>
     setForms((f) => ({ ...f, [k]: { ...f[k], ...patch } }));
@@ -264,8 +278,24 @@ export function Studio() {
   const rights = useMemo(() => (mechanic ? holderRights(mechanic, forms) : []), [mechanic, forms]);
   const cost = useMemo(() => (experiment ? estimateExperimentCost(experiment) : null), [experiment]);
 
+  // Recommended extension set for this mechanic (SDK, deterministic) and its
+  // compatibility report. The review screen renders this report and blocks the
+  // devnet deploy stub until every red finding is explicitly acknowledged.
+  const recExtensions = useMemo(() => (mechanic ? recommendExtensions(mechanic) : null), [mechanic]);
+  const compatReport = useMemo(
+    () => (recExtensions ? checkCompatibility(recExtensions.recommended) : null),
+    [recExtensions],
+  );
+  const redFindings = useMemo(
+    () => (compatReport?.findings ?? []).filter((f) => f.requiresAcknowledgment),
+    [compatReport],
+  );
+  const allRedAcked = redFindings.every((f) => ackedFindings.includes(f.subject));
+  const deployBlocked = (compatReport?.blocked ?? false) && !allRedAcked;
+
   const pick = (k: MechanicKind) => {
     setMechanic(k);
+    setAckedFindings([]);
     setStep(1);
     setTab('simple');
   };
@@ -407,12 +437,59 @@ export function Studio() {
           <dl className="kv">
             <dt>Name / Symbol</dt><dd>{experiment.name} ({experiment.symbol}), {experiment.decimals} decimals</dd>
             <dt>Mechanic</dt><dd>{MECHANIC_LABELS[mechanic]}</dd>
-            <dt>Extensions</dt><dd className="mono">{experiment.extensions.join(', ') || 'none'}</dd>
+            <dt>Extensions</dt><dd className="mono">{recExtensions ? (recExtensions.recommended.join(', ') || 'none') : 'none'}</dd>
             <dt>Authorities</dt><dd className="mono small">
               mint: {experiment.authorities.mintAuthority ?? 'none'} · permanent delegate: {experiment.authorities.permanentDelegate ? 'ENABLED' : 'none'} · transfer hook: {experiment.authorities.transferHookProgram ? 'ENABLED' : 'none'}
             </dd>
             <dt>Est. cost</dt><dd>{cost.totalSol} SOL (devnet estimate)</dd>
           </dl>
+          <p className="muted small">Extensions are declared <strong>BEFORE mint creation</strong> — the set above is what will be enabled, shown here first. The compatibility check below evaluates exactly this set (deterministic SDK check, no chain).</p>
+
+          {compatReport && recExtensions && (
+            <div>
+              <h4 className="section-title">
+                Token-2022 compatibility check{' '}
+                <span className={`badge compat-${compatReport.overall}`}>{compatReport.overall}</span>{' '}
+                <span className="badge sim">simulation</span>
+              </h4>
+              <p className="small">Recommended extensions for {MECHANIC_LABELS[mechanic]}: <span className="mono">{recExtensions.recommended.join(', ') || 'none'}</span></p>
+              <p className="small muted">{recExtensions.notes}</p>
+              {!compatReport.protocolValid && (
+                <div className="warn blocking"><span className="sev">Protocol-invalid</span><br />This extension set is rejected by the Token-2022 program at mint initialization. The mint cannot be created as configured — the findings below describe how to fix it.</div>
+              )}
+              {compatReport.findings.map((f) => (
+                <div key={f.subject} className={`warn${f.severity === 'red' ? ' blocking' : ''}${f.severity === 'green' ? ' info' : ''}`}>
+                  <span className="sev">{f.severity === 'red' ? 'Blocking — acknowledgment required' : f.severity === 'amber' ? 'Warning' : 'OK'}</span><br />
+                  <strong>{f.title}</strong><br />
+                  {f.explanation}
+                  {f.venueNotes.length > 0 && (
+                    <ul className="small" style={{ marginBottom: 0 }}>
+                      {f.venueNotes.map((n) => <li key={n}>{n}</li>)}
+                    </ul>
+                  )}
+                  {f.requiresAcknowledgment && (
+                    <label className="small" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', alignItems: 'flex-start', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        style={{ marginTop: '0.25rem' }}
+                        checked={ackedFindings.includes(f.subject)}
+                        onChange={(e) => setAckedFindings((a) => e.target.checked ? [...a, f.subject] : a.filter((s) => s !== f.subject))}
+                      />
+                      <span>{ackStatement(f)}</span>
+                    </label>
+                  )}
+                </div>
+              ))}
+              {compatReport.blocked && (
+                <p className="small" style={{ color: 'var(--danger)' }}>
+                  {allRedAcked
+                    ? 'All red findings acknowledged — the devnet deploy stub is unlocked.'
+                    : 'Deploy to devnet is BLOCKED until every red finding above is explicitly acknowledged.'}
+                </p>
+              )}
+            </div>
+          )}
+
           <h4 className="section-title">Warnings acknowledged</h4>
           {warnings.filter((w) => w.severity !== 'info').map((w) => (
             <div key={w.code} className={`warn${w.severity === 'blocking' ? ' blocking' : ''}`}><span className="sev">{w.severity}</span><br />{w.message}</div>
@@ -420,8 +497,9 @@ export function Studio() {
           {warnings.filter((w) => w.severity !== 'info').length === 0 && <p className="muted small">No warnings or blockers.</p>}
           <div className="row mt">
             <button className="btn ghost" onClick={() => setStep(2)}>← Back</button>
-            <button className="btn primary" onClick={() => { setDeployNote(''); setDeployOpen(true); }}>Deploy to devnet</button>
+            <button className="btn primary" disabled={deployBlocked} onClick={() => { setDeployNote(''); setDeployOpen(true); }}>Deploy to devnet</button>
           </div>
+          {deployBlocked && <p className="small" style={{ color: 'var(--danger)' }}>The deploy stub stays disabled until every red compatibility finding above is acknowledged.</p>}
           <div className="card mt" style={{ borderColor: '#7c2a35' }}>
             <h4 style={{ marginTop: 0, color: 'var(--danger)' }}>Mainnet launch — hard-gated</h4>
             <p className="small muted">Mainnet deployment is a separate, irreversible action. Type the exact phrase to unlock the button. Even unlocked, this build does not execute a mainnet deployment.</p>
@@ -529,18 +607,8 @@ function SimpleForm({ mechanic, forms, setForm }: {
       return (
         <>
           <div className="field"><label>Custody program</label><input className="mono" value={f.custodyProgram} onChange={(e) => setForm('vessel', { custodyProgram: e.target.value })} /><span className="hint">Program that holds the underlying assets. Recorded on the container.</span></div>
-          <div className="row">
-            <div className="field" style={{ flex: 1 }}><label>Deposit permission</label>
-              <select value={f.depositPermission} onChange={(e) => setForm('vessel', { depositPermission: e.target.value as VesselPermission })}>
-                <option value="open">Open — anyone</option><option value="owner-only">Owner only</option><option value="authority-list">Authority list</option>
-              </select>
-            </div>
-            <div className="field" style={{ flex: 1 }}><label>Withdraw permission</label>
-              <select value={f.withdrawPermission} onChange={(e) => setForm('vessel', { withdrawPermission: e.target.value as VesselPermission })}>
-                <option value="open">Open — anyone</option><option value="owner-only">Owner only</option><option value="authority-list">Authority list</option>
-              </select>
-            </div>
-          </div>
+          <div className="field"><label>Deposit authority (base58)</label><input className="mono" value={f.depositAuthority} onChange={(e) => setForm('vessel', { depositAuthority: e.target.value })} /><span className="hint">The only key that may deposit assets. Blank uses the demo owner key.</span></div>
+          <div className="field"><label>Withdraw authority (base58)</label><input className="mono" value={f.withdrawAuthority} onChange={(e) => setForm('vessel', { withdrawAuthority: e.target.value })} /><span className="hint">The only key that may withdraw assets. Blank uses the demo owner key.</span></div>
         </>
       );
     }

@@ -135,3 +135,52 @@ export function evaluateStaleness(state: DynamicState, now: number): {
     description: staleBehaviorDescription(state.config.staleBehavior),
   };
 }
+
+/**
+ * On-chain acceptance mirror for `alchemy_dynamic::ingest_update`
+ * (programs/programs/alchemy_dynamic/src/lib.rs).
+ *
+ * The on-chain program enforces the SAME freshness / monotonicity / frequency
+ * checks as `appendUpdate`, in the SAME order. Two rules have no SDK twin and
+ * are documented here as deliberate divergences:
+ *  - `paused`: an on-chain-only admin circuit breaker, checked FIRST.
+ *  - `value <= maxSupply` is a HARD REJECT on-chain; `appendUpdate` instead
+ *    clamps the simulated supply target, because `valueToSupplyScale` has no
+ *    on-chain counterpart (`value` semantics are experiment-defined).
+ *
+ * Returns the rejection reason, or null when the update would be accepted.
+ */
+export interface OnChainDynamicMirror {
+  maxSupply: bigint;
+  updateFrequencySeconds: number;
+  staleThresholdSeconds: number;
+  updateCount: number;
+  /** source_ts of the last accepted update (0 when none). */
+  lastUpdateTs: number;
+  paused: boolean;
+}
+
+export type OnChainRejectReason =
+  | 'PAUSED'
+  | 'FUTURE_UPDATE'
+  | 'STALE_UPDATE'
+  | 'NON_MONOTONIC_UPDATE'
+  | 'TOO_FREQUENT'
+  | 'MAX_SUPPLY_EXCEEDED';
+
+export function checkOnChainAccept(
+  cfg: OnChainDynamicMirror,
+  value: bigint,
+  sourceTs: number,
+  now: number,
+): OnChainRejectReason | null {
+  if (cfg.paused) return 'PAUSED';
+  if (sourceTs > now) return 'FUTURE_UPDATE';
+  if (now - sourceTs > cfg.staleThresholdSeconds) return 'STALE_UPDATE';
+  if (cfg.updateCount > 0) {
+    if (sourceTs <= cfg.lastUpdateTs) return 'NON_MONOTONIC_UPDATE';
+    if (sourceTs - cfg.lastUpdateTs < cfg.updateFrequencySeconds) return 'TOO_FREQUENT';
+  }
+  if (value > cfg.maxSupply) return 'MAX_SUPPLY_EXCEEDED';
+  return null;
+}

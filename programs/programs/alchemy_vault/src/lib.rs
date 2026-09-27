@@ -24,7 +24,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-declare_id!("ALCHvault11111111111111111111111111111111");
+declare_id!("Fm6Uh2nzTnWXtXhR3B76BndV4s4kiBRA9fEv7BskDgHx");
 
 /// Max bytes for the mock-asset label (e.g. "MOCK-GOLD — NOT PAXG").
 pub const MAX_MOCK_LABEL_LEN: usize = 64;

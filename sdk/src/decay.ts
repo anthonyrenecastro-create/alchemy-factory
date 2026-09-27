@@ -61,6 +61,33 @@ export function isExpired(now: number, config: DecayConfig): boolean {
   return now >= config.expiresAt;
 }
 
+/**
+ * On-chain parity: mirrors `apply_decay`'s period counting in the
+ * `alchemy_decay` program EXACTLY.
+ *
+ * periods = floor((min(nowTs, expiryTs) - lastDecayTs) / periodSeconds),
+ * clamped at 0 when the numerator is negative.
+ *
+ * On-chain, a result of 0 (or negative elapsed) fails with `DecayNotDue`;
+ * this function returns the raw count so callers can distinguish
+ * "not due" (0) from "due" (>= 1).
+ *
+ * `periodSeconds <= 0` can never reach the program (rejected at init), so it
+ * returns 0 here as a simulation-side guard.
+ */
+export function periodsElapsed(
+  lastDecayTs: number,
+  nowTs: number,
+  periodSeconds: number,
+  expiryTs: number,
+): number {
+  if (periodSeconds <= 0) return 0;
+  const effective = Math.min(nowTs, expiryTs);
+  const elapsed = effective - lastDecayTs;
+  if (elapsed < 0) return 0;
+  return Math.floor(elapsed / periodSeconds);
+}
+
 export function canTransfer(now: number, config: DecayConfig): { allowed: boolean; reason: string } {
   if (!isExpired(now, config)) return { allowed: true, reason: 'Token has not expired.' };
   return config.transfersAllowedAfterExpiry

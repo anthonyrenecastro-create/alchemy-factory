@@ -51,7 +51,7 @@ export const SAMPLE_TOKENS: SampleToken[] = [
     mechanic: 'curve',
     isSample: true,
     description: 'A bonding-curve token using the audited linear template. Price rises with supply.',
-    whyItBehaves: 'Its price is set by a linear bonding curve (base price + slope × supply) held in the curve program\u2019s reserve vault. Every buy raises the price for the next buyer; every sell lowers it. A 0.3% protocol fee is taken on each trade.',
+    whyItBehaves: 'Its price is set by a linear bonding curve (base price + slope × supply) held in the curve program\u2019s reserve vault. Every buy raises the price for the next buyer; every sell lowers it. A 0.3% protocol fee is taken on each trade. On-chain, the program mints and burns tokens and holds the reserve — price is a pure function of supply, so no holder can change the formula. Authorities: the curve program is the effective mint authority (it alone can mint/burn); no freeze authority, no permanent delegate, no transfer hook.',
     authorities: {
       mintAuthority: null,
       freezeAuthority: null,
@@ -88,7 +88,7 @@ export const SAMPLE_TOKENS: SampleToken[] = [
     mechanic: 'decay',
     isSample: true,
     description: 'A time-decaying admission token: balances shrink 5% per month and transfers stop at expiry.',
-    whyItBehaves: 'Each month 5% of every balance is removed and routed to the creator treasury — that is the token\u2019s designed decay, not a bug. At the fixed expiry date transfers are disabled entirely, while redemption stays open for 30 days.',
+    whyItBehaves: 'The decay program is the deterministic schedule authority: it advances decay periods with exact on-chain integer math and discloses the removed-value recipient (here: the creator treasury). It moves no tokens itself — the per-holder decayed balance is derived from the on-chain period counters (the display layer), and the schedule is cranked forward permissionlessly, on a fixed timetable. Authorities: the decay authority owns the schedule; removed value goes to the disclosed recipient, never silently burned. Risks, stated honestly: after expiry, transfers stop and redemption closes 30 days later — but these post-expiry flags are on-chain declarations, not program-enforced (enforcement would require a transfer hook, which this build does not silently enable). Balances shrink deterministically; holding is penalized by design.',
     authorities: {
       mintAuthority: null,
       freezeAuthority: null,
@@ -124,7 +124,7 @@ export const SAMPLE_TOKENS: SampleToken[] = [
     mechanic: 'dynamic',
     isSample: true,
     description: 'Supply tracks an authenticated oracle feed (sample: simulated SOL/USD), capped at 1M tokens.',
-    whyItBehaves: 'An update authority posts values from an off-chain price feed; supply is set to value × scale, clamped at the 1M max supply. The feed is an off-chain data source — writing its result on-chain does not make it decentralized. If the feed goes stale (>5 min), transfers freeze until a fresh update arrives.',
+    whyItBehaves: 'On-chain, the dynamic program accepts updates ONLY from the update authority and rejects anything else: stale data (older than the max age), non-monotonic or future-dated values, and updates arriving too frequently are all rejected, and every accepted update lands in an append-only history you can audit. Supply is set to value × scale, clamped at the max supply. Authorities: the update authority is a single key — it can push any value within the cap. Risks, stated honestly: the program does not decide what the number MEANS — value semantics are defined by this experiment (sample: simulated SOL/USD). The data source is an off-chain feed, named honestly — writing its result on-chain never makes it decentralized. This sample\u2019s stale-data circuit breaker freezes transfers until a fresh update arrives; that pause is a safety switch, not a malfunction.',
     authorities: {
       mintAuthority: 'UpdateAuth11111111111111111111111111111111',
       freezeAuthority: null,
@@ -160,7 +160,7 @@ export const SAMPLE_TOKENS: SampleToken[] = [
     mechanic: 'vessel',
     isSample: true,
     description: 'A transferable container holding a defined basket of sample assets.',
-    whyItBehaves: 'The token is a container: owning it means owning the claim on its holdings ledger (sample SOL and sample USDC), custodied by the vessel program. Transferring the token transfers the entire basket and its permission rules to the new owner; the previous owner keeps nothing.',
+    whyItBehaves: 'The token IS the container. On-chain, the vessel PDA custodies the assets in PDA-owned token accounts, and a holding invariant is asserted on every deposit, withdrawal, and ownership transfer. Deposit and withdraw are separately permissioned — in this sample deposits are open and withdrawals are owner-only. Authorities: the container owner (token holder) plus the configured deposit and withdraw authorities. Transferring the token transfers the entire basket AND its permission rules to the new owner; the previous owner keeps nothing. Risk, stated honestly: direct transfers to a custody account bypass the program and desynchronize the on-chain ledger — v1 has no sweep instruction, so only deposit through the program.',
     authorities: {
       mintAuthority: null,
       freezeAuthority: null,
@@ -199,7 +199,7 @@ export const SAMPLE_TOKENS: SampleToken[] = [
     mechanic: 'proofx',
     isSample: true,
     description: 'Mints from a verifiable course-completion attestation. Manual verifier approval — not automatic.',
-    whyItBehaves: 'Tokens mint only from an attestation signed by a trusted verifier, and each attestation carries a one-time nonce — replaying it is rejected. Approval here is MANUAL: a human verifier reviews the evidence off-chain. It is never described as automatic verification. The revocation authority can revoke badges.',
+    whyItBehaves: 'Tokens mint only from an attestation signed by a trusted verifier — the verifier\u2019s co-signature on the mint transaction IS the attestation. Here the verifier is a human reviewer, so these badges are \u201cmanually approved\u201d — never described as automatically verified. Each attestation carries a one-time nonce: replaying it is rejected, so one attestation mints exactly once. Authorities: the trusted verifier (who can issue or withhold badges at will) and the revocation authority. Risk, stated honestly: revocation flags the claim — it does NOT burn tokens already minted. The badge is soulbound (non-transferable) by design: it cannot be sold or sent.',
     authorities: {
       mintAuthority: 'Verifier111111111111111111111111111111111',
       freezeAuthority: null,

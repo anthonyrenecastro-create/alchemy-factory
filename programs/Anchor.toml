@@ -2,13 +2,13 @@
 resolution = true
 skip-lint = false
 [programs.devnet]
-alchemy_factory = "ALCHfctry1111111111111111111111111111111111"
-alchemy_curve   = "ALCHcurve111111111111111111111111111111111"
-alchemy_decay   = "ALCHdecay111111111111111111111111111111111"
-alchemy_dynamic = "ALCHdynmc111111111111111111111111111111111"
-alchemy_vessel  = "ALCHvssl1111111111111111111111111111111111"
-alchemy_proofx  = "ALCHproof11111111111111111111111111111111"
-alchemy_vault   = "ALCHvault11111111111111111111111111111111"
+alchemy_factory = "2KhE8tbR3jMufMA6fYsBpeNn2Es8iFw4idVzF8fZmSiQ"
+alchemy_curve   = "6fFjhEQx73RZ5sYJLtsyWo53ZDgvfV4YokLdrLh2DPDL"
+alchemy_decay   = "HcXp2bp4ttC1wrzXfx6YJvdCKL6YhKgGEHiXAFNfwizD"
+alchemy_dynamic = "GpyFdGCFshaNHvqnove6jBuxUjcC5jmTVeT2zpmaXWUY"
+alchemy_vessel  = "GDKMx2kuStLK64X2YSMnhbS8EPmpruDQoyXvoKzsTa6v"
+alchemy_proofx  = "GbohkenWuNxCZnzSkrMoJx17Uuc6nSjef5cYWgx9i71k"
+alchemy_vault   = "Fm6Uh2nzTnWXtXhR3B76BndV4s4kiBRA9fEv7BskDgHx"
 [provider]
 cluster = "devnet"
 wallet = "~/.config/solana/id.json"

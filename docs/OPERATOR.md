@@ -64,11 +64,19 @@ and re-run `npm test` in `sdk/`.
 
 ## Deploying programs to devnet
 
-1. `anchor build` and note the program IDs in `programs/target/deploy/`.
-2. Replace the placeholder IDs in `programs/Anchor.toml` **and** every
-   `declare_id!` with the real ones (they must match exactly).
-3. `anchor deploy --provider.cluster devnet`
-4. Register each experiment via the `alchemy_factory` program so authorities
+1. Program keypairs: `node scripts/gen-program-keypairs.js` (run from the repo
+   root; needs `cd programs && npm install` first for `@solana/web3.js`).
+   This writes `programs/target/deploy/<program>-keypair.json` — **gitignored,
+   never committed**. The same command reuses existing keypairs on re-run, so
+   program IDs stay stable. **Back up these keypair files off-machine before
+   any deploy**; losing one means losing the ability to upgrade that program.
+2. `anchor build` and note the program IDs in `programs/target/deploy/`.
+3. Replace the placeholder IDs in `programs/Anchor.toml` **and** every
+   `declare_id!` with the real ones (they must match exactly). Stage 2 did
+   this for all seven programs; verify with
+   `grep -h declare_id! programs/programs/*/src/lib.rs`.
+4. `anchor deploy --provider.cluster devnet`
+5. Register each experiment via the `alchemy_factory` program so authorities
    and holder-rights summaries are on-chain and discoverable.
 
 **Mainnet is never a default.** The studio's mainnet path requires typing an

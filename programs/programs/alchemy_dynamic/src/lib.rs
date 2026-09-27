@@ -1,21 +1,35 @@
-//! # alchemy_dynamic — dynamic/evolving mechanic (Stage 2 stub)
+//! # alchemy_dynamic — dynamic/evolving mechanic (Stage 2)
 //!
-//! Planned behavior: metadata/supply changes in response to authenticated
-//! data ingested through an oracle adapter. Records the data source, update
-//! authority, maximum supply, update frequency, stale-data behavior, and a
-//! complete on-chain change history (one [`UpdateRecord`] PDA per update).
+//! A creator configures how a Token-2022 mint responds to authenticated
+//! off-chain data ingested through an oracle adapter: a hard supply cap, a
+//! minimum spacing between updates, and a staleness threshold. Every accepted
+//! update appends one [`UpdateRecord`] PDA to a complete, append-only
+//! on-chain history; records are never modified or deleted.
+//!
+//! ## What the program enforces (and what it does not)
+//!
+//! The program enforces *freshness* (no future timestamps, no stale-at-arrival
+//! data), *monotonicity* (source timestamps strictly increase),
+//! *frequency* (minimum spacing between accepted updates), and a hard *cap*
+//! (`value <= max_supply`). It does **not** interpret `value`: the economic
+//! meaning of the ingested number is experiment-defined and must be disclosed
+//! to holders verbatim — the program checks the envelope, never the meaning.
 //!
 //! An off-chain data source is never described as decentralized merely because
-//! its result is written on-chain: the `data_source_name` and
-//! `oracle_adapter` are disclosed verbatim.
+//! its result is written on-chain: `data_source_name` and `oracle_adapter`
+//! are disclosed verbatim.
 //!
-//! Status: state structs, instruction signatures, and errors are defined;
-//! instruction bodies are not yet implemented (Stage 2).
+//! Until the first update lands, `last_value` / `last_update_ts` are zero and
+//! consumers must treat the feed as stale (see `isStale` in the SDK).
+//!
+//! No transfer hooks, permanent delegates, or freeze authorities are touched
+//! by this program.
 
 use anchor_lang::prelude::*;
+use anchor_spl::token_2022;
 use anchor_spl::token_interface::{Mint, TokenInterface};
 
-declare_id!("ALCHdynmc111111111111111111111111111111111");
+declare_id!("GpyFdGCFshaNHvqnove6jBuxUjcC5jmTVeT2zpmaXWUY");
 
 /// Max bytes for the human-readable data-source name.
 pub const MAX_SOURCE_NAME_LEN: usize = 64;
@@ -25,34 +39,192 @@ pub mod alchemy_dynamic {
     use super::*;
 
     /// Create the dynamic configuration for a Token-2022 mint.
+    ///
+    /// The signer becomes `update_authority`. No data has been ingested yet:
+    /// `last_value` / `last_update_ts` start at zero and `update_count` at
+    /// zero, so consumers must treat the feed as stale until the first
+    /// [`ingest_update`](fn@ingest_update) lands.
     pub fn initialize_dynamic(
-        _ctx: Context<InitializeDynamic>,
-        _max_supply: u64,
-        _update_frequency_seconds: i64,
-        _stale_threshold_seconds: i64,
-        _data_source_name: String,
-        _oracle_adapter: Pubkey,
+        ctx: Context<InitializeDynamic>,
+        max_supply: u64,
+        update_frequency_seconds: i64,
+        stale_threshold_seconds: i64,
+        data_source_name: String,
+        oracle_adapter: Pubkey,
     ) -> Result<()> {
-        Err(DynamicError::NotImplemented.into())
+        require!(
+            ctx.accounts.token_program.key() == token_2022::ID,
+            DynamicError::NotToken2022
+        );
+        require!(max_supply > 0, DynamicError::InvalidMaxSupply);
+        require!(
+            update_frequency_seconds > 0,
+            DynamicError::InvalidUpdateFrequency
+        );
+        require!(
+            stale_threshold_seconds > 0,
+            DynamicError::InvalidStaleThreshold
+        );
+        require!(
+            data_source_name.len() <= MAX_SOURCE_NAME_LEN,
+            DynamicError::SourceNameTooLong
+        );
+        require!(
+            oracle_adapter != Pubkey::default(),
+            DynamicError::InvalidSource
+        );
+
+        let config = &mut ctx.accounts.dynamic_config;
+        config.mint = ctx.accounts.mint.key();
+        config.update_authority = ctx.accounts.authority.key();
+        config.oracle_adapter = oracle_adapter;
+        config.data_source_name = data_source_name;
+        config.max_supply = max_supply;
+        config.update_frequency_seconds = update_frequency_seconds;
+        config.stale_threshold_seconds = stale_threshold_seconds;
+        config.last_value = 0;
+        config.last_update_ts = 0;
+        config.update_count = 0;
+        config.paused = false;
+        config.bump = *ctx
+            .bumps
+            .get("dynamic_config")
+            .ok_or(DynamicError::MathOverflow)?;
+
+        emit!(DynamicInitialized {
+            mint: config.mint,
+            update_authority: config.update_authority,
+            oracle_adapter: config.oracle_adapter,
+            max_supply,
+        });
+        Ok(())
     }
 
-    /// Ingest one authenticated data point. Only `update_authority` may call;
-    /// enforces `update_frequency_seconds` spacing and appends an
-    /// [`UpdateRecord`] to the on-chain history.
+    /// Ingest one authenticated data point. Only `update_authority` may call.
+    ///
+    /// Validation mirrors the SDK's `appendUpdate` exactly, in this order:
+    /// 1. `source_ts` must not be in the future ([`DynamicError::FutureUpdate`]).
+    /// 2. Stale-at-arrival data is never written ([`DynamicError::StaleData`]).
+    /// 3. Timestamps must strictly increase ([`DynamicError::NonMonotonicUpdate`]).
+    /// 4. Minimum `update_frequency_seconds` spacing ([`DynamicError::UpdateTooFrequent`]).
+    /// 5. `value` must not exceed `max_supply` ([`DynamicError::MaxSupplyExceeded`]).
+    ///
+    /// The admin circuit breaker ([`pause_dynamic`](fn@pause_dynamic)) is
+    /// checked before all of the above: a paused feed rejects every update
+    /// with [`DynamicError::Paused`].
+    ///
+    /// On success the [`UpdateRecord`] PDA for this index is created and the
+    /// config's `last_value` / `last_update_ts` / `update_count` advance.
+    /// History is append-only: records are never modified or deleted.
     pub fn ingest_update(
-        _ctx: Context<IngestUpdate>,
-        _value: u64,
-        _source_hash: [u8; 32],
+        ctx: Context<IngestUpdate>,
+        value: u64,
+        source_ts: i64,
+        source_hash: [u8; 32],
     ) -> Result<()> {
-        Err(DynamicError::NotImplemented.into())
+        // Copy everything needed out of the config first so the borrow ends
+        // before the record/config are mutated below.
+        let (paused, stale_threshold_seconds, update_count, last_update_ts, update_frequency_seconds, max_supply, mint, config_key) = {
+            let cfg = &ctx.accounts.dynamic_config;
+            (
+                cfg.paused,
+                cfg.stale_threshold_seconds,
+                cfg.update_count,
+                cfg.last_update_ts,
+                cfg.update_frequency_seconds,
+                cfg.max_supply,
+                cfg.mint,
+                cfg.key(),
+            )
+        };
+
+        // Circuit breaker first: a paused feed rejects every update.
+        require!(!paused, DynamicError::Paused);
+
+        let now = ctx.accounts.clock.unix_timestamp;
+        // 1. The source timestamp must not be in the future.
+        require!(source_ts <= now, DynamicError::FutureUpdate);
+        // 2. Stale-at-arrival data is never written.
+        let age = now
+            .checked_sub(source_ts)
+            .ok_or(DynamicError::MathOverflow)?;
+        require!(age <= stale_threshold_seconds, DynamicError::StaleData);
+        // 3-4. Append-only history: timestamps strictly increase and respect
+        // the minimum spacing. Skipped for the very first update (no last
+        // timestamp exists yet).
+        if update_count > 0 {
+            require!(
+                source_ts > last_update_ts,
+                DynamicError::NonMonotonicUpdate
+            );
+            let gap = source_ts
+                .checked_sub(last_update_ts)
+                .ok_or(DynamicError::MathOverflow)?;
+            require!(
+                gap >= update_frequency_seconds,
+                DynamicError::UpdateTooFrequent
+            );
+        }
+        // 5. Hard cap on the ingested value.
+        require!(value <= max_supply, DynamicError::MaxSupplyExceeded);
+
+        let record = &mut ctx.accounts.update_record;
+        record.config = config_key;
+        record.index = update_count;
+        record.value = value;
+        record.source_hash = source_hash;
+        record.ts = source_ts;
+
+        let config = &mut ctx.accounts.dynamic_config;
+        config.last_value = value;
+        config.last_update_ts = source_ts;
+        config.update_count = update_count
+            .checked_add(1)
+            .ok_or(DynamicError::MathOverflow)?;
+
+        emit!(UpdateIngested {
+            mint,
+            index: update_count,
+            value,
+            source_hash,
+            ts: source_ts,
+        });
+        Ok(())
     }
 
     /// Rotate the update authority. Current update authority only.
     pub fn update_dynamic_authority(
-        _ctx: Context<DynamicAdmin>,
-        _new_authority: Pubkey,
+        ctx: Context<DynamicAdmin>,
+        new_authority: Pubkey,
     ) -> Result<()> {
-        Err(DynamicError::NotImplemented.into())
+        let old = ctx.accounts.dynamic_config.update_authority;
+        ctx.accounts.dynamic_config.update_authority = new_authority;
+        emit!(DynamicAuthorityUpdated {
+            mint: ctx.accounts.dynamic_config.mint,
+            old_authority: old,
+            new_authority,
+        });
+        Ok(())
+    }
+
+    /// Halt update ingestion. Current update authority only. While paused,
+    /// [`ingest_update`](fn@ingest_update) rejects every update with
+    /// [`DynamicError::Paused`]; history already written is unaffected.
+    pub fn pause_dynamic(ctx: Context<DynamicAdmin>) -> Result<()> {
+        ctx.accounts.dynamic_config.paused = true;
+        emit!(DynamicPaused {
+            mint: ctx.accounts.dynamic_config.mint,
+        });
+        Ok(())
+    }
+
+    /// Resume update ingestion. Current update authority only.
+    pub fn unpause_dynamic(ctx: Context<DynamicAdmin>) -> Result<()> {
+        ctx.accounts.dynamic_config.paused = false;
+        emit!(DynamicUnpaused {
+            mint: ctx.accounts.dynamic_config.mint,
+        });
+        Ok(())
     }
 }
 
@@ -80,7 +252,7 @@ pub struct InitializeDynamic<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(value: u64)]
+#[instruction(value: u64, source_ts: i64, source_hash: [u8; 32])]
 pub struct IngestUpdate<'info> {
     pub update_authority: Signer<'info>,
     #[account(
@@ -91,7 +263,9 @@ pub struct IngestUpdate<'info> {
     )]
     pub dynamic_config: Account<'info, DynamicConfig>,
     pub mint: InterfaceAccount<'info, Mint>,
-    /// History record PDA, created by this instruction.
+    /// History record PDA, created by this instruction. Append-only: the seed
+    /// index is the pre-increment `update_count`, so each update gets exactly
+    /// one record and records are never rewritten.
     #[account(
         init,
         payer = update_authority,
@@ -144,12 +318,15 @@ pub struct DynamicConfig {
     pub last_update_ts: i64,
     /// Monotonic counter; also the seed index of the next [`UpdateRecord`].
     pub update_count: u64,
+    /// Admin circuit breaker: while true, `ingest_update` rejects everything.
+    pub paused: bool,
     pub bump: u8,
 }
 
 impl DynamicConfig {
-    /// 8 + 32 + 32 + 32 + (4 + 64) + 8 + 8 + 8 + 8 + 8 + 8 + 1.
-    pub const SPACE: usize = 8 + 32 + 32 + 32 + (4 + MAX_SOURCE_NAME_LEN) + 8 + 8 + 8 + 8 + 8 + 8 + 1;
+    /// 8 + 32 + 32 + 32 + (4 + 64) + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1.
+    pub const SPACE: usize =
+        8 + 32 + 32 + 32 + (4 + MAX_SOURCE_NAME_LEN) + 8 + 8 + 8 + 8 + 8 + 8 + 1 + 1;
 }
 
 /// One entry of the complete on-chain change history.
@@ -169,7 +346,7 @@ impl UpdateRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Events
+// Events (emitted on every state change)
 // ---------------------------------------------------------------------------
 
 #[event]
@@ -187,6 +364,23 @@ pub struct UpdateIngested {
     pub value: u64,
     pub source_hash: [u8; 32],
     pub ts: i64,
+}
+
+#[event]
+pub struct DynamicAuthorityUpdated {
+    pub mint: Pubkey,
+    pub old_authority: Pubkey,
+    pub new_authority: Pubkey,
+}
+
+#[event]
+pub struct DynamicPaused {
+    pub mint: Pubkey,
+}
+
+#[event]
+pub struct DynamicUnpaused {
+    pub mint: Pubkey,
 }
 
 // ---------------------------------------------------------------------------
@@ -211,4 +405,18 @@ pub enum DynamicError {
     SourceNameTooLong,
     #[msg("Arithmetic overflow or underflow.")]
     MathOverflow,
+    #[msg("Update timestamp is in the future.")]
+    FutureUpdate,
+    #[msg("Update timestamp is not strictly after the last accepted update.")]
+    NonMonotonicUpdate,
+    #[msg("Update ingestion is paused.")]
+    Paused,
+    #[msg("max_supply must be greater than zero.")]
+    InvalidMaxSupply,
+    #[msg("update_frequency_seconds must be greater than zero.")]
+    InvalidUpdateFrequency,
+    #[msg("stale_threshold_seconds must be greater than zero.")]
+    InvalidStaleThreshold,
+    #[msg("This program only operates with the Token-2022 program.")]
+    NotToken2022,
 }

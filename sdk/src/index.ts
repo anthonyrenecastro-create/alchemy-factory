@@ -11,5 +11,6 @@ export * from './decay.js';
 export * from './dynamic.js';
 export * from './vessel.js';
 export * from './proofx.js';
+export * from './compat.js';
 export * from './jubilee.js';
 export * from './costs.js';

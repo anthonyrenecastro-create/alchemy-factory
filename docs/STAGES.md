@@ -19,11 +19,17 @@ and **incomplete** (what is not done). Claims never exceed evidence.
 
 | Area | Status |
 |---|---|
-| On-chain | `alchemy_decay`, `alchemy_dynamic`, `alchemy_vessel`, `alchemy_proofx` on devnet |
-| Off-chain | Compatibility checker: Token-2022 extension combination declared **before** mint creation; wallet/DEX integration notes |
-| Simulated | Full simulation coverage incl. stale-oracle, expiry, decay, attestation-replay scenarios |
-| Tested | Anchor tests add: stale oracle data rejection, proof replay rejection, transfer-restriction enforcement, vault ownership-change safety |
-| Incomplete | PAXG vault still mock-only; no mainnet deployment |
+| On-chain | `alchemy_decay`, `alchemy_dynamic`, `alchemy_vessel`, `alchemy_proofx` **implemented** (Anchor 0.31.1, Token-2022 only, no transfer hooks / permanent delegates); compiled and tested in CI. **Not yet deployed to devnet** — deployment needs explicit approval. |
+| Off-chain | Compatibility checker (`sdk/src/compat.ts`): Token-2022 extension combination validated **before** mint creation against the research severity matrix (green/amber/red); red findings block the studio deploy step until explicitly acknowledged. Wallet/DEX notes carry vintage labels. |
+| Simulated | Full simulation coverage incl. stale-oracle, expiry, decay, attestation-replay scenarios; SDK math mirrors on-chain math exactly (decay period counting, dynamic update validation) |
+| Tested | Anchor tests add: stale oracle data rejection (incl. boundary semantics), proof replay rejection (nonce PDA), transfer-restriction declarations, vessel ownership-change safety + holding invariant, decay schedule correctness (expiry capping, tick math, recipient disclosure), authority abuse, rounding edges |
+| Incomplete | PAXG vault still mock-only; no mainnet deployment; programs not yet independently audited |
+
+Honest scope notes for Stage 2 (what the programs do and do NOT do):
+- `alchemy_decay` is the deterministic **schedule authority**: `apply_decay` advances decay periods with exact integer math and discloses the removed-value recipient. It moves no tokens itself — per-holder decayed balances are derived from the on-chain counters (display layer). Post-expiry transfer/redemption flags are on-chain **declarations**, not program-enforced (enforcement would require a transfer hook, which Stage 2 does not silently enable).
+- `alchemy_dynamic` enforces freshness / monotonicity / frequency / supply-cap on ingested updates and keeps an append-only history. It does not interpret the economic meaning of `value`, and the off-chain data source is named, never described as decentralized.
+- `alchemy_vessel` custodies assets in PDA-owned Token-2022 accounts with a holding invariant asserted on every flow. Direct transfers to a custody account desynchronize the ledger (v1 has no sweep instruction).
+- `alchemy_proofx`: the verifier's co-signature on the mint transaction **is** the attestation. A human verifier is "manually approved", never "automatically verified". Revocation flags claims; it does not burn already-minted tokens.
 
 ## Stage 3 — PAXG vault prototype (mock collateral on devnet)
 

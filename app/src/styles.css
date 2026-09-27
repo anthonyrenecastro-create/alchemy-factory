@@ -111,6 +111,9 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
 .badge.verified { background: rgba(94, 234, 212, 0.12); color: var(--accent); border: 1px solid #1e5a52; }
 .badge.unverified { background: rgba(251, 113, 133, 0.12); color: var(--danger); border: 1px solid #7c2a35; }
 .badge.devnet { background: rgba(125, 211, 252, 0.12); color: var(--info); border: 1px solid #1e5a7c; }
+.badge.compat-green { background: rgba(94, 234, 212, 0.12); color: var(--accent); border: 1px solid #1e5a52; }
+.badge.compat-amber { background: rgba(251, 191, 36, 0.15); color: var(--warn); border: 1px solid #7c5a1e; }
+.badge.compat-red { background: rgba(251, 113, 133, 0.12); color: var(--danger); border: 1px solid #7c2a35; }
 
 .warn { border-left: 3px solid var(--warn); background: rgba(251,191,36,0.06); padding: 0.7rem 1rem; border-radius: 0 8px 8px 0; margin: 0.6rem 0; font-size: 0.88rem; }
 .warn.blocking { border-color: var(--danger); background: rgba(251,113,133,0.07); }
