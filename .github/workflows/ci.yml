@@ -40,29 +40,36 @@ jobs:
         # pinning it to 2.7.1 broke the resolve because toml_edit 0.25.x
         # (via proc-macro-crate 3.5 -> borsh-derive -> borsh -> solana-program)
         # requires indexmap ^2.13.0 (cargo exit 101). Only pin crates the
-        # build actually names from now on. proc-macro-crate is pinned
-        # unconditionally (no tree check): the `cargo tree -p` presence check
-        # proved unreliable for it in CI even though the package IS in the
-        # graph, and pinning it downgrades toml_edit as a side benefit.
+        # build actually names from now on.
+        # Pin mechanics that bit us (2026-09-27, run 36319202138):
+        # - `cargo update -p <name>` is AMBIGUOUS when several major versions
+        #   are locked (proc-macro-crate had 0.1.5 AND 3.5.0) — always pin
+        #   with an explicit name@locked-version spec, discovered from
+        #   cargo metadata so future resolves don't hardcode a stale version.
+        # - Pin PARENTS before CHILDREN: zeroize_derive 1.4.2 cannot be
+        #   selected while zeroize is still locked at 1.9.0 (it requires
+        #   zeroize_derive ^1.5), so zeroize -> 1.8.1 must land first.
         working-directory: programs
         run: |
           cargo generate-lockfile
-          if ! cargo update -p proc-macro-crate --precise 3.2.0; then
-            echo "proc-macro-crate pin not applicable, continuing"
-          fi
-          for pin in \
-            "blake3:1.5.5" \
-            "unicode-segmentation:1.12.0" \
-            "zeroize_derive:1.4.2" \
-            "zeroize:1.8.1" \
-          ; do
-            pkg="${pin%%:*}"; ver="${pin##*:}"
-            if cargo tree -p "$pkg" --depth 0 >/dev/null 2>&1; then
-              cargo update -p "$pkg" --precise "$ver"
-            else
-              echo "not in dependency graph, skipping pin: $pkg"
-            fi
-          done
+          pin_one() { # $1=crate name, $2=target version (downgrade pin)
+            local name="$1" target="$2" locked
+            locked=$(cargo metadata --format-version=1 2>/dev/null | python3 -c "
+          import json,sys,re
+          def key(v): return [int(x) for x in re.findall(r'\d+', v)[:4]]
+          vs=[p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='${name}']
+          print(max(vs, key=key) if vs else '')
+          ")
+            if [ -z "$locked" ]; then echo "not in dependency graph, skipping pin: $name"; return 0; fi
+            if [ "$locked" = "$target" ]; then echo "already pinned: $name $target"; return 0; fi
+            echo "pinning $name $locked -> $target"
+            cargo update -p "$name@$locked" --precise "$target"
+          }
+          pin_one proc-macro-crate 3.2.0
+          pin_one blake3 1.5.5
+          pin_one unicode-segmentation 1.12.0
+          pin_one zeroize 1.8.1
+          pin_one zeroize_derive 1.4.2
       - name: Build programs
         working-directory: programs
         run: anchor build
