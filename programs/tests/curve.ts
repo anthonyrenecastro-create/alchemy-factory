@@ -205,7 +205,7 @@ describe("alchemy_curve", () => {
     BigInt(await provider.connection.getBalance(pk));
 
   const fetchConfig = async (configPda: PublicKey) =>
-    program.account.curveConfig.fetch(configPda);
+    (program.account as any).curveConfig.fetch(configPda);
 
   async function expectAnchorError(promise: Promise<unknown>, code: string): Promise<void> {
     try {
@@ -349,6 +349,30 @@ describe("alchemy_curve", () => {
     );
   });
 
+  it("rejects rotating the authority to the all-zero address (permanent lockout)", async () => {
+    const curve = await initCurve({ curve: linearCurve(), feeBps: 100, maxSlippageBps: 10_000 });
+
+    // A typo or malicious rotation to PublicKey.default would permanently
+    // lock out every admin instruction; the program must fail closed.
+    await expectAnchorError(
+      program.methods
+        .updateAuthority(PublicKey.default)
+        .accounts({ authority: payer, curveConfig: curve.configPda, mint: curve.mint.publicKey })
+        .rpc(),
+      "InvalidPubkey",
+    );
+
+    // The authority is unchanged and still functional.
+    const config: any = await fetchConfig(curve.configPda);
+    assert.strictEqual(config.authority.toBase58(), payer.toBase58());
+    await program.methods
+      .updateParams(150, null, null)
+      .accounts({ authority: payer, curveConfig: curve.configPda, mint: curve.mint.publicKey })
+      .rpc();
+    const updated: any = await fetchConfig(curve.configPda);
+    assert.strictEqual(updated.feeBps, 150);
+  });
+
   it("rejects admin actions from non-authorities, honors the real authority", async () => {
     const curve = await initCurve({ curve: linearCurve(), feeBps: 100, maxSlippageBps: 10_000 });
     const evil = Keypair.generate();
@@ -395,6 +419,32 @@ describe("alchemy_curve", () => {
       .accounts({ authority: payer, curveConfig: curve.configPda, mint: curve.mint.publicKey })
       .rpc();
     await expectAnchorError(staleAuth, "Unauthorized");
+  });
+
+  it("rejects a sell whose proceeds round to zero (fail closed, no burn-for-nothing)", async () => {
+    // intercept 0, minimal slope: prices are sub-lamport at small supplies.
+    const dustCurve = { linear: { slope: bn(1), intercept: bn(0) } };
+    const curve = await initCurve({ curve: dustCurve, feeBps: 0, maxSlippageBps: 10_000 });
+
+    // Buy 1_000 base units @ supply 0:
+    // cost = ceil(1 * (0 + 1_000^2) / (2 * 1e9)) = ceil(1e6 / 2e9) = 1 lamport.
+    // (Spot at supply 0 is 0, so the impact rail is skipped — same regime as
+    // the sell below.)
+    await doBuy(curve, null, 1_000n, 10n);
+    assert.strictEqual(await tokenBalance(curve.mint.publicKey, payer), 1_000n);
+
+    // Sell 1_000 @ supply 1_000:
+    // proceeds = floor(1 * (2*1_000*1_000 - 1_000^2) / (2 * 1e9))
+    //          = floor(1e6 / 2e9) = 0.
+    // Without the guard the trader would burn 1_000 tokens and receive
+    // nothing (the impact rail is also skipped when the floored average
+    // price is zero). The program must fail closed with ZeroAmount.
+    await expectAnchorError(doSell(curve, null, 1_000n, 0n), "ZeroAmount");
+
+    // No tokens were burned and the reserve is untouched.
+    assert.strictEqual(await tokenBalance(curve.mint.publicKey, payer), 1_000n);
+    const config: any = await fetchConfig(curve.configPda);
+    assert.strictEqual(BigInt(config.reserveLamports.toString()), 1n);
   });
 
   it("prices step curves exactly across thresholds", async () => {

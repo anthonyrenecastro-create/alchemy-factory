@@ -186,10 +186,18 @@ pub mod alchemy_decay {
     }
 
     /// Rotate the admin authority. Authority only. Emits the change.
+    ///
+    /// The default pubkey is rejected as the new authority: rotating to it
+    /// would permanently brick admin (no key can ever sign as the default
+    /// pubkey).
     pub fn update_decay_authority(
         ctx: Context<DecayAdmin>,
         new_authority: Pubkey,
     ) -> Result<()> {
+        require!(
+            new_authority != Pubkey::default(),
+            DecayError::InvalidAuthority
+        );
         let old = ctx.accounts.decay_config.authority;
         ctx.accounts.decay_config.authority = new_authority;
         emit!(DecayAuthorityUpdated {
@@ -205,6 +213,13 @@ pub mod alchemy_decay {
     ///
     /// Rejected before `expiry_ts` ([`DecayError::NotExpired`]): the schedule
     /// must remain readable on-chain for the token's whole lifetime.
+    ///
+    /// Also rejected while any full decay period between `last_decay_ts` and
+    /// `expiry_ts` remains unapplied ([`DecayError::ScheduleNotSettled`]):
+    /// the authority must run a final crank first. Otherwise closing could
+    /// truncate the on-chain schedule record — `total_periods_applied`
+    /// would permanently undercount the true schedule, stranding disclosure
+    /// of the removed-value tail.
     pub fn close_decay(ctx: Context<CloseDecay>) -> Result<()> {
         require!(
             ctx.accounts.recipient.key() == ctx.accounts.decay_config.recipient,
@@ -215,6 +230,16 @@ pub mod alchemy_decay {
             now >= ctx.accounts.decay_config.expiry_ts,
             DecayError::NotExpired
         );
+        // The schedule must be fully settled: no full period may remain
+        // between last_decay_ts and expiry_ts. (last_decay_ts never exceeds
+        // expiry_ts — the crank caps at expiry — so a non-positive numerator
+        // also passes.)
+        let unsettled_periods = ctx.accounts.decay_config.expiry_ts
+            .checked_sub(ctx.accounts.decay_config.last_decay_ts)
+            .ok_or(DecayError::MathOverflow)?
+            .checked_div(ctx.accounts.decay_config.period_seconds)
+            .ok_or(DecayError::MathOverflow)?;
+        require!(unsettled_periods <= 0, DecayError::ScheduleNotSettled);
 
         emit!(DecayClosed {
             mint: ctx.accounts.decay_config.mint,
@@ -415,4 +440,8 @@ pub enum DecayError {
     NotToken2022,
     #[msg("The token has not expired yet; the decay config cannot be closed before expiry.")]
     NotExpired,
+    #[msg("New authority must not be the default pubkey (it would brick admin).")]
+    InvalidAuthority,
+    #[msg("The decay schedule is not fully settled: crank the remaining periods before closing.")]
+    ScheduleNotSettled,
 }

@@ -13,9 +13,11 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  AuthorityType,
   createMint,
   getAccount,
   getAssociatedTokenAddressSync,
+  setAuthority,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import {
@@ -53,6 +55,14 @@ describe("alchemy_proofx", () => {
     return pda;
   };
 
+  // Cast through `any`: without generated IDL types the account namespace
+  // is untyped (same pattern as vessel.ts's fetchVessel/fetchHolding).
+  const fetchProofxConfig = async (configPda: PublicKey): Promise<any> =>
+    (program.account as any).proofxConfig.fetch(configPda);
+
+  const fetchClaimRecord = async (claimPda: PublicKey): Promise<any> =>
+    (program.account as any).claimRecord.fetch(claimPda);
+
   type Setup = {
     mint: Keypair;
     configPda: PublicKey;
@@ -61,8 +71,12 @@ describe("alchemy_proofx", () => {
   };
 
   /**
-   * Create a Token-2022 mint whose mint authority is the proofx-config PDA
-   * (unless overridden), then initialize the proofx config for it.
+   * Create a Token-2022 mint, initialize the proofx config for it, and hand
+   * the mint's authority to the config PDA (the standard post-init flow).
+   *
+   * `initialize_proofx` requires the mint's current mint authority to sign
+   * (anti-squatting: only the mint's controller can publish its config), so
+   * the mint is created with `mintAuthority` as mint authority first.
    */
   async function initProofx(
     opts: {
@@ -71,13 +85,17 @@ describe("alchemy_proofx", () => {
       evidenceFormatHash?: number[];
       privacyNoteHash?: number[];
       disputeWindowSeconds?: number;
-      mintAuthorityOverride?: PublicKey;
+      /** Keypair holding the mint's mint-authority at init; defaults to the payer. */
+      mintAuthority?: Keypair;
+      /** Skip transferring the mint authority to the config PDA after init. */
+      skipMintAuthorityTransfer?: boolean;
       tokenProgram?: PublicKey;
     } = {},
   ): Promise<Setup> {
     const mint = Keypair.generate();
     const verifier = Keypair.generate();
     const revocationAuthority = Keypair.generate();
+    const mintAuthority = opts.mintAuthority ?? payerKeypair;
     const [configPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("proofx"), mint.publicKey.toBuffer()],
       program.programId,
@@ -85,13 +103,16 @@ describe("alchemy_proofx", () => {
     await createMint(
       provider.connection,
       payerKeypair,
-      opts.mintAuthorityOverride ?? configPda,
+      mintAuthority.publicKey,
       null,
       6,
       mint,
       undefined,
       TOKEN_2022_PROGRAM_ID,
     );
+    // The provider wallet already signs; only add the mint authority when it
+    // is a different key.
+    const extraSigners = mintAuthority.publicKey.equals(payer) ? [] : [mintAuthority];
     await program.methods
       .initializeProofx(
         opts.verifierPk ?? verifier.publicKey,
@@ -104,10 +125,27 @@ describe("alchemy_proofx", () => {
         authority: payer,
         proofxConfig: configPda,
         mint: mint.publicKey,
+        mintAuthority: mintAuthority.publicKey,
         tokenProgram: opts.tokenProgram ?? TOKEN_2022_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
+      .signers(extraSigners)
       .rpc();
+    if (!opts.skipMintAuthorityTransfer) {
+      // Hand the mint to the config PDA so mint_from_attestation's
+      // mint-authority check passes.
+      await setAuthority(
+        provider.connection,
+        mintAuthority,
+        mint.publicKey,
+        mintAuthority.publicKey,
+        AuthorityType.MintTokens,
+        configPda,
+        undefined,
+        undefined,
+        TOKEN_2022_PROGRAM_ID,
+      );
+    }
     return { mint, configPda, verifier, revocationAuthority };
   }
 
@@ -216,7 +254,7 @@ describe("alchemy_proofx", () => {
 
   it("initializes the config and stores every field", async () => {
     const setup = await initProofx();
-    const config: any = await program.account.proofxConfig.fetch(setup.configPda);
+    const config: any = await fetchProofxConfig(setup.configPda);
     assert.strictEqual(config.mint.toBase58(), setup.mint.publicKey.toBase58());
     assert.strictEqual(config.authority.toBase58(), payer.toBase58());
     assert.strictEqual(config.verifier.toBase58(), setup.verifier.publicKey.toBase58());
@@ -268,7 +306,7 @@ describe("alchemy_proofx", () => {
 
     assert.strictEqual(await tokenBalance(ata), amount);
 
-    const record: any = await program.account.claimRecord.fetch(claimPda);
+    const record: any = await fetchClaimRecord(claimPda);
     assert.strictEqual(record.config.toBase58(), setup.configPda.toBase58());
     assert.strictEqual(BigInt(record.nonce.toString()), nonce);
     assert.strictEqual(record.claimant.toBase58(), claimant.publicKey.toBase58());
@@ -339,14 +377,90 @@ describe("alchemy_proofx", () => {
   });
 
   it("rejects minting when the config PDA is not the mint authority", async () => {
+    // The mint authority never hands the mint to the config PDA, so the
+    // mint-time authority check fails.
     const attacker = Keypair.generate();
-    const setup = await initProofx({ mintAuthorityOverride: attacker.publicKey });
+    const setup = await initProofx({
+      mintAuthority: attacker,
+      skipMintAuthorityTransfer: true,
+    });
     const claimant = Keypair.generate();
     await fund(claimant.publicKey);
     await expectAnchorError(
       mintFromAttestation(setup, { claimant, nonce: 12n }),
       "InvalidAttestation",
     );
+  });
+
+  it("rejects config squatting: only the mint authority can initialize", async () => {
+    // The legitimate mint owner creates the mint with themselves as mint
+    // authority. Before the fix, anyone could pre-register the config PDA
+    // for this mint with their own verifier/authority and permanently block
+    // the legitimate deployment (no close or re-initialize path exists).
+    const mint = Keypair.generate();
+    await createMint(
+      provider.connection,
+      payerKeypair,
+      payer,
+      null,
+      6,
+      mint,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+    );
+    const [configPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("proofx"), mint.publicKey.toBuffer()],
+      program.programId,
+    );
+
+    // A squatter tries to pre-register the config with their own verifier.
+    const squatter = Keypair.generate();
+    await fund(squatter.publicKey);
+    const squatAccounts = {
+      proofxConfig: configPda,
+      mint: mint.publicKey,
+      mintAuthority: squatter.publicKey,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    };
+    await expectAnchorError(
+      program.methods
+        .initializeProofx(
+          squatter.publicKey,
+          new Array(32).fill(1),
+          squatter.publicKey,
+          bn(86400),
+          new Array(32).fill(2),
+        )
+        .accounts({ authority: squatter.publicKey, ...squatAccounts })
+        .signers([squatter])
+        .rpc(),
+      "InvalidMintAuthority",
+    );
+
+    // The squat failed atomically: no config account was created...
+    let configExists = true;
+    try {
+      await fetchProofxConfig(configPda);
+    } catch {
+      configExists = false;
+    }
+    assert.strictEqual(configExists, false, "squat must not create the config");
+
+    // ...and the legitimate mint authority can still initialize afterwards.
+    await program.methods
+      .initializeProofx(
+        squatter.publicKey, // verifier choice is orthogonal; authority is what matters
+        new Array(32).fill(1),
+        squatter.publicKey,
+        bn(86400),
+        new Array(32).fill(2),
+      )
+      .accounts({ authority: payer, ...squatAccounts, mintAuthority: payer })
+      .rpc();
+    const config: any = await fetchProofxConfig(configPda);
+    assert.strictEqual(config.authority.toBase58(), payer.toBase58());
+    assert.strictEqual(config.mint.toBase58(), mint.publicKey.toBase58());
   });
 
   it("revocation authority can revoke: flag set, tokens not burned, event emitted", async () => {
@@ -364,7 +478,7 @@ describe("alchemy_proofx", () => {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     await program.removeEventListener(listener);
 
-    const record: any = await program.account.claimRecord.fetch(claimPda);
+    const record: any = await fetchClaimRecord(claimPda);
     assert.strictEqual(record.revoked, true);
     // Revocation is a registry flag: the minted tokens are untouched.
     assert.strictEqual(await tokenBalance(ata), 100n);
@@ -436,7 +550,7 @@ describe("alchemy_proofx", () => {
         mint: setup.mint.publicKey,
       })
       .rpc();
-    const config: any = await program.account.proofxConfig.fetch(setup.configPda);
+    const config: any = await fetchProofxConfig(setup.configPda);
     assert.strictEqual(config.verifier.toBase58(), successor.publicKey.toBase58());
 
     // The old verifier's signature is now rejected...

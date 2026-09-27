@@ -88,8 +88,29 @@ export function periodsElapsed(
   return Math.floor(elapsed / periodSeconds);
 }
 
-export function canTransfer(now: number, config: DecayConfig): { allowed: boolean; reason: string } {
-  if (!isExpired(now, config)) return { allowed: true, reason: 'Token has not expired.' };
+/**
+ * On-chain parity with the `alchemy_decay::close_decay` settlement
+ * precondition.
+ *
+ * The program refuses to close a decay config while any full decay period
+ * between `lastDecayTs` and `expiryTs` remains unapplied (`ScheduleNotSettled`):
+ * the authority must crank the tail first, so closing cannot truncate the
+ * on-chain schedule record (`total_periods_applied`).
+ *
+ * Mirrors: floor((expiryTs - lastDecayTs) / periodSeconds) <= 0.
+ * Integrators (e.g. the holder app) can call this before attempting a close
+ * to know whether a final crank is still required.
+ */
+export function decayScheduleSettled(
+  lastDecayTs: number,
+  expiryTs: number,
+  periodSeconds: number,
+): boolean {
+  if (periodSeconds <= 0) return false;
+  return Math.floor((expiryTs - lastDecayTs) / periodSeconds) <= 0;
+}
+
+export function canTransfer(now: number, config: DecayConfig): { allowed: boolean; reason: string } {  if (!isExpired(now, config)) return { allowed: true, reason: 'Token has not expired.' };
   return config.transfersAllowedAfterExpiry
     ? { allowed: true, reason: 'Expiry passed, but this token permits transfers after expiry.' }
     : { allowed: false, reason: 'Token expired: transfers are disabled by the experiment config.' };

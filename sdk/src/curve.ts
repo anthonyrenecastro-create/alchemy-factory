@@ -35,6 +35,9 @@
 /** Fixed-point scale for the linear curve. MUST match the on-chain constant. */
 export const PRICE_SCALE = 1_000_000_000n;
 
+/** Maximum number of steps in a step curve. MUST match the on-chain constant. */
+export const MAX_STEPS = 32;
+
 export interface LinearCurveConfig {
   kind: 'linear';
   /** Price of the first token base unit, in quote base units (on-chain `intercept`). */
@@ -114,12 +117,40 @@ export function validateCurveConfig(config: CurveConfig): string[] {
       errors.push('linear curve must have basePrice > 0 or slope > 0');
     }
   } else {
-    if (config.steps.length === 0) errors.push('step curve needs at least one step');
-    let prev = -1n;
-    for (const [i, s] of config.steps.entries()) {
-      if (s.supplyUpperBound <= prev) errors.push(`step ${i}: bounds must be strictly increasing`);
-      if (s.price <= 0n) errors.push(`step ${i}: price must be > 0`);
-      prev = s.supplyUpperBound;
+    // Mirror on-chain `validate_curve` EXACTLY. The SDK steps
+    //   steps[j] = { supplyUpperBound: U_j, price: P_j }
+    // map to on-chain thresholds
+    //   T_0 = (0, P_0), T_j = (U_{j-1}, P_j) for j >= 1,
+    // which must satisfy: non-empty, at most MAX_STEPS, first threshold at
+    // supply 0, supplies strictly increasing, prices strictly positive and
+    // non-decreasing. (The last SDK bound U_{n-1} never appears on-chain —
+    // the last step's price continues as a flat tail — so it is not
+    // constrained here.)
+    const steps = config.steps;
+    if (steps.length === 0) errors.push('step curve needs at least one step');
+    if (steps.length > MAX_STEPS) {
+      errors.push(`step curve supports at most ${MAX_STEPS} steps (on-chain limit)`);
+    }
+    let prevSupply = 0n; // T_0.supply
+    let prevPrice = 0n;
+    for (const [j, s] of steps.entries()) {
+      if (s.supplyUpperBound < 0n) errors.push(`step ${j}: bound must be >= 0`);
+      if (s.price <= 0n) errors.push(`step ${j}: price must be > 0`);
+      if (s.price < prevPrice) {
+        errors.push(`step ${j}: prices must be non-decreasing (on-chain monotonicity)`);
+      }
+      if (j > 0) {
+        // T_j.supply = U_{j-1} must strictly exceed the previous threshold.
+        const thresholdSupply = steps[j - 1].supplyUpperBound;
+        if (thresholdSupply <= prevSupply) {
+          errors.push(
+            `step ${j}: on-chain threshold supplies must be strictly increasing ` +
+              `(bound ${j - 1} must be > ${prevSupply})`,
+          );
+        }
+        prevSupply = thresholdSupply;
+      }
+      prevPrice = s.price;
     }
   }
   return errors;

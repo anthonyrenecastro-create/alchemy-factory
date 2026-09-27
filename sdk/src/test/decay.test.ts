@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   balanceAt, canTransfer, canRedeem, decaySchedule, recipientOfRemovedValue,
-  validateDecayConfig, periodsElapsed, type DecayConfig,
+  validateDecayConfig, periodsElapsed, decayScheduleSettled, type DecayConfig,
 } from '../decay.js';
 
 const cfg: DecayConfig = {
@@ -39,6 +39,51 @@ describe('decay schedule', () => {
   it('validation rejects bad configs', () => {
     assert.ok(validateDecayConfig({ ...cfg, decayRateBps: 10_001 }).length > 0);
     assert.ok(validateDecayConfig({ ...cfg, removedValueRecipient: '' }).length > 0);
+  });
+});
+
+describe('decayScheduleSettled (on-chain parity with close_decay)', () => {
+  // Mirrors the program's ScheduleNotSettled precondition:
+  // floor((expiryTs - lastDecayTs) / periodSeconds) <= 0.
+  // Security-review note: regression coverage from our own internal review,
+  // not an independent audit.
+  const PERIOD = 100;
+  const EXPIRY = 1_010_000;
+
+  it('settled when lastDecayTs == expiryTs', () => {
+    assert.equal(decayScheduleSettled(EXPIRY, EXPIRY, PERIOD), true);
+  });
+
+  it('settled when less than one full period remains', () => {
+    assert.equal(decayScheduleSettled(EXPIRY - 99, EXPIRY, PERIOD), true);
+    assert.equal(decayScheduleSettled(EXPIRY - 1, EXPIRY, PERIOD), true);
+  });
+
+  it('not settled when one or more full periods remain', () => {
+    assert.equal(decayScheduleSettled(EXPIRY - 100, EXPIRY, PERIOD), false);
+    assert.equal(decayScheduleSettled(EXPIRY - 101, EXPIRY, PERIOD), false);
+    assert.equal(decayScheduleSettled(EXPIRY - 10_000, EXPIRY, PERIOD), false);
+  });
+
+  it('settled when lastDecayTs is past expiryTs (defensive; crank caps at expiry)', () => {
+    assert.equal(decayScheduleSettled(EXPIRY + 50, EXPIRY, PERIOD), true);
+  });
+
+  it('non-positive periodSeconds is never settled (rejected at init on-chain)', () => {
+    assert.equal(decayScheduleSettled(EXPIRY, EXPIRY, 0), false);
+    assert.equal(decayScheduleSettled(EXPIRY, EXPIRY, -5), false);
+  });
+
+  it('agrees with periodsElapsed at the expiry cap', () => {
+    // settled  <=>  periodsElapsed(lastDecayTs, expiryTs, period, expiryTs) == 0
+    // i.e. a crank at expiry would apply nothing (on-chain: DecayNotDue).
+    for (const last of [EXPIRY - 10_000, EXPIRY - 100, EXPIRY - 99, EXPIRY, EXPIRY + 7]) {
+      assert.equal(
+        decayScheduleSettled(last, EXPIRY, PERIOD),
+        periodsElapsed(last, EXPIRY, PERIOD, EXPIRY) === 0,
+        `mismatch at lastDecayTs=${last}`,
+      );
+    }
   });
 });
 

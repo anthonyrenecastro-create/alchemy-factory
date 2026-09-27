@@ -35,17 +35,23 @@ jobs:
         # host cargo, then pin the known offenders DOWN to pre-edition2024
         # versions before anchor build. If a future resolve pulls a NEW
         # edition2024 crate, the build error names it; add another pin here.
-        # ORDER MATTERS: proc-macro-crate must be pinned FIRST. Pinning it
-        # downgrades toml_edit (3.5.0 -> older), and only the older toml_edit
-        # tolerates indexmap 2.7.1 (toml_edit 0.25.x requires indexmap ^2.13.0,
-        # which makes the indexmap pin fail the resolve with exit 101).
+        # NOTE (2026-09-27): the indexmap pin was dropped — it was preemptive
+        # and no build error has ever named indexmap as an edition2024 crate;
+        # pinning it to 2.7.1 broke the resolve because toml_edit 0.25.x
+        # (via proc-macro-crate 3.5 -> borsh-derive -> borsh -> solana-program)
+        # requires indexmap ^2.13.0 (cargo exit 101). Only pin crates the
+        # build actually names from now on. proc-macro-crate is pinned
+        # unconditionally (no tree check): the `cargo tree -p` presence check
+        # proved unreliable for it in CI even though the package IS in the
+        # graph, and pinning it downgrades toml_edit as a side benefit.
         working-directory: programs
         run: |
           cargo generate-lockfile
+          if ! cargo update -p proc-macro-crate --precise 3.2.0; then
+            echo "proc-macro-crate pin not applicable, continuing"
+          fi
           for pin in \
-            "proc-macro-crate:3.2.0" \
             "blake3:1.5.5" \
-            "indexmap:2.7.1" \
             "unicode-segmentation:1.12.0" \
             "zeroize_derive:1.4.2" \
             "zeroize:1.8.1" \

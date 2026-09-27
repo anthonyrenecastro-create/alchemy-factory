@@ -117,3 +117,62 @@ describe('stress simulation', () => {
     assert.ok(r.warnings.some((w) => w.includes('price impact')));
   });
 });
+
+// Security-review regression tests (our own review, not an external audit):
+// the SDK step validator must mirror on-chain `validate_curve` EXACTLY, so
+// the studio can never accept (or quote) a curve the program would reject.
+describe('step validation mirrors on-chain validate_curve', () => {
+  const step = (steps: { supplyUpperBound: bigint; price: bigint }[]): StepCurveConfig => ({
+    kind: 'step',
+    feeBps: 0,
+    steps,
+  });
+
+  it('accepts a valid step curve', () => {
+    assert.deepEqual(
+      validateCurveConfig(
+        step([
+          { supplyUpperBound: 100n, price: 10n },
+          { supplyUpperBound: 200n, price: 25n },
+        ]),
+      ),
+      [],
+    );
+  });
+
+  it('rejects decreasing prices (on-chain monotonicity)', () => {
+    // Bounds are fine; prices fall — the program rejects this with InvalidCurve.
+    const errs = validateCurveConfig(
+      step([
+        { supplyUpperBound: 100n, price: 25n },
+        { supplyUpperBound: 200n, price: 10n },
+      ]),
+    );
+    assert.ok(errs.some((e) => e.includes('non-decreasing')), errs.join('; '));
+  });
+
+  it('rejects a first bound of 0 with 2+ steps (threshold supplies must strictly increase from 0)', () => {
+    // Maps to on-chain thresholds (0, P0), (0, P1): supplies not strictly
+    // increasing -> the program rejects this with InvalidCurve.
+    const errs = validateCurveConfig(
+      step([
+        { supplyUpperBound: 0n, price: 10n },
+        { supplyUpperBound: 200n, price: 25n },
+      ]),
+    );
+    assert.ok(errs.length > 0, 'expected rejection');
+  });
+
+  it('a single step with bound 0 is valid (maps to the single on-chain threshold at supply 0)', () => {
+    assert.deepEqual(validateCurveConfig(step([{ supplyUpperBound: 0n, price: 10n }])), []);
+  });
+
+  it('rejects more than 32 steps (on-chain account-size bound)', () => {
+    const steps = Array.from({ length: 33 }, (_, i) => ({
+      supplyUpperBound: BigInt(i + 1),
+      price: 10n,
+    }));
+    const errs = validateCurveConfig(step(steps));
+    assert.ok(errs.some((e) => e.includes('32')), errs.join('; '));
+  });
+});

@@ -158,7 +158,7 @@ describe("alchemy_decay", () => {
   }
 
   const fetchConfig = async (configPda: PublicKey): Promise<any> =>
-    program.account.decayConfig.fetch(configPda);
+    (program.account as any).decayConfig.fetch(configPda);
 
   async function expectAnchorError(promise: Promise<unknown>, code: string): Promise<void> {
     try {
@@ -422,6 +422,9 @@ describe("alchemy_decay", () => {
     });
     await waitUntilChainTime(expiry);
 
+    // Close requires a fully settled schedule: crank the tail periods first.
+    await doCrank(decay, recipient.publicKey);
+
     const recipientBefore = await provider.connection.getBalance(recipient.publicKey);
     const closedEvent = await captureEvent<any>("decayClosed", () =>
       doClose(decay, recipient.publicKey),
@@ -449,6 +452,103 @@ describe("alchemy_decay", () => {
         `unexpected error after close: ${err?.message ?? err}`,
       );
     }
+  });
+
+  it("rejects close while the schedule has unsettled periods (anti-truncation)", async () => {
+    // Regression: close_decay must refuse to delete the config while a tail
+    // of unapplied periods remains between last_decay_ts and expiry_ts —
+    // otherwise total_periods_applied would permanently undercount the true
+    // schedule, stranding disclosure of the removed-value tail.
+    const now = await chainNow();
+    const recipient = Keypair.generate().publicKey;
+    const expiry = now + 8;
+    const decay = await initDecay({
+      expiryTs: expiry,
+      decayBps: 100,
+      periodSeconds: 2,
+      recipient,
+    });
+    const lastDecay = Number((await fetchConfig(decay.configPda)).lastDecayTs.toString());
+    await waitUntilChainTime(expiry);
+    assert(
+      Math.floor((expiry - lastDecay) / 2) >= 1,
+      "test bug: no full period elapsed before expiry",
+    );
+
+    // No crank has run since init: the tail is unsettled.
+    await expectAnchorError(doClose(decay, recipient), "ScheduleNotSettled");
+
+    // A final crank settles the schedule; close then succeeds.
+    await doCrank(decay, recipient);
+    const settled: any = await fetchConfig(decay.configPda);
+    const remaining = Math.floor(
+      (expiry - Number(settled.lastDecayTs.toString())) / 2,
+    );
+    assert.strictEqual(remaining, 0, "crank settled every period up to expiry");
+    await doClose(decay, recipient);
+    try {
+      await fetchConfig(decay.configPda);
+      assert.fail("expected the closed decay config account to be gone");
+    } catch (err: any) {
+      assert(
+        /Account does not exist|failed to get account/i.test(err?.message ?? ""),
+        `unexpected error after close: ${err?.message ?? err}`,
+      );
+    }
+  });
+
+  it("rejects close paying rent to the wrong recipient", async () => {
+    // The close=recipient reclaim must go to the configured removed-value
+    // recipient and nowhere else.
+    const now = await chainNow();
+    const recipient = Keypair.generate().publicKey;
+    const impostor = Keypair.generate().publicKey;
+    const expiry = now + 8;
+    const decay = await initDecay({
+      expiryTs: expiry,
+      decayBps: 100,
+      periodSeconds: 2,
+      recipient,
+    });
+    await waitUntilChainTime(expiry);
+    await doCrank(decay, recipient); // settle so only the recipient check can fail
+
+    await expectAnchorError(doClose(decay, impostor), "RecipientMismatch");
+
+    // The configured recipient still closes fine.
+    await doClose(decay, recipient);
+    try {
+      await fetchConfig(decay.configPda);
+      assert.fail("expected the closed decay config account to be gone");
+    } catch (err: any) {
+      assert(
+        /Account does not exist|failed to get account/i.test(err?.message ?? ""),
+        `unexpected error after close: ${err?.message ?? err}`,
+      );
+    }
+  });
+
+  it("rejects rotating the decay authority to the default pubkey", async () => {
+    const now = await chainNow();
+    const recipient = Keypair.generate().publicKey;
+    const decay = await initDecay({
+      expiryTs: now + 3600,
+      decayBps: 100,
+      periodSeconds: 60,
+      recipient,
+    });
+    const brick = program.methods
+      .updateDecayAuthority(PublicKey.default)
+      .accounts({
+        authority: payer,
+        decayConfig: decay.configPda,
+        mint: decay.mint.publicKey,
+      })
+      .rpc();
+    await expectAnchorError(brick, "InvalidAuthority");
+
+    const config = await fetchConfig(decay.configPda);
+    assert.strictEqual(config.authority.toBase58(), payer.toBase58());
   });
 
   it("rejects authority abuse: non-authority cannot close or rotate authority", async () => {

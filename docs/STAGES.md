@@ -58,11 +58,11 @@ Honest scope notes for Stage 2 (what the programs do and do NOT do):
 
 | Area | Status |
 |---|---|
-| On-chain | Only after review; mainnet launch requires explicit user confirmation |
+| On-chain | **Implemented** (all seven programs). Internal adversarial review complete 2026-09-27: **14 findings, all fixed in program code, each with a regression test** (Anchor tests + SDK tests). Findings: vessel `TransferContainer` struct missing (did not compile) [critical]; vessel hostile-extension acceptance, custody-PDA griefing, proofx config squatting [high]; decay close settlement, dynamic Token-2022 mint check, curve zero-proceeds sells, vault treasury rotation, SDK/oracle validation parity [medium]; zero-address authority bricking, test gaps [low]. Residual risks documented in [MAINNET_READINESS.md](MAINNET_READINESS.md) (single-step rotation typos, locked donations, proofx authority rotation). This was **our own review, not an independent audit**. **UNVERIFIED**: CI green is necessary but not sufficient; no devnet deploy or end-to-end devnet transaction has succeeded — deployment needs explicit approval. |
 | Off-chain | Yellowstone gRPC Geyser evaluated as **optional mainnet indexing/monitoring** (standard RPC/WebSocket remain the devnet path) |
 | Simulated | Jubilee simulation stays a simulation until vault, redemption, and treasury rules are tested |
-| Tested | Full threat-model review; fixes verified in CI |
-| Incomplete until done | Production readiness, any yield claims, physical-gold redemption path |
+| Tested | Full threat-model review; fixes verified in CI (SDK 142/142; Anchor tests run in CI) |
+| Incomplete until done | Production readiness, any yield claims, physical-gold redemption path, Paxos confirmation of the native mint (see [MAINNET_READINESS.md](MAINNET_READINESS.md) §1–§4 for the full gate list) |
 
 ## Standing non-claims
 

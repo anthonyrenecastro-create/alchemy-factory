@@ -551,6 +551,46 @@ export function checkCompatibility(extensions: Token2022Extension[]): CompatRepo
 }
 
 /**
+ * Vault collateral allow-list check (Stage 3).
+ *
+ * MIRRORS the on-chain gate in `alchemy_vault`'s `validate_collateral_mint`
+ * (programs/programs/alchemy_vault/src/lib.rs) EXACTLY: the program accepts
+ * ONLY `metadata-pointer`, `token-metadata`, and `mint-close-authority` on
+ * the collateral mint and rejects everything else with
+ * VaultError::InvalidCollateralMint. This is a pure, deterministic,
+ * off-chain pre-check — the on-chain program is the binding authority;
+ * this function exists so the studio surfaces the same verdict before the
+ * creator pays for a transaction that would fail.
+ *
+ * NOTE: this policy explicitly rejects the real PAXG mint in Stage 3 (it
+ * carries a permanent delegate). Accepting real PAXG is a Stage-4 decision
+ * made as an explicit per-mint allow-list entry, never by widening this rule.
+ * This is our own review tooling, not an external audit.
+ */
+
+/** Extensions the on-chain vault accepts on the collateral mint. */
+export const VAULT_COLLATERAL_ALLOWED_EXTENSIONS: Token2022Extension[] = [
+  'metadata-pointer',
+  'token-metadata',
+  'mint-close-authority',
+];
+
+export interface VaultCollateralVerdict {
+  /** True when the on-chain program would accept this extension set. */
+  allowed: boolean;
+  /** Extensions the on-chain allow-list rejects (empty when allowed). */
+  rejected: Token2022Extension[];
+}
+
+export function checkVaultCollateral(extensions: Token2022Extension[]): VaultCollateralVerdict {
+  const unique = [...new Set(extensions)];
+  const rejected = unique.filter(
+    (e) => !VAULT_COLLATERAL_ALLOWED_EXTENSIONS.includes(e),
+  );
+  return { allowed: rejected.length === 0, rejected };
+}
+
+/**
  * Research-backed Token-2022 extension recommendation per mechanic family
  * (docs/research/token2022-extensions.md, Cases 1–6). The returned set is the
  * safe baseline; red-flagged or optional extensions are described in `notes`,

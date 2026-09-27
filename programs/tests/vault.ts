@@ -648,6 +648,64 @@ describe("alchemy_vault", () => {
     assert.strictEqual(config.authority.toBase58(), newAuthority.publicKey.toBase58());
   });
 
+  it("treasury rotation: non-authority fails, authority redirects fees", async () => {
+    // Without a rotation path, fee flow would be permanently bound to the
+    // initializing key: a lost treasury key would strand all future fees.
+    const v = await initVault({ redeemFeeBps: 100, withdrawalLimitBps: 10000 });
+    const depositor = await newDepositor();
+    const depositorAccount = await fundTokenAccount(v.collateralMint, depositor.publicKey, 1_000_000n);
+    await doDeposit(v, depositor, depositorAccount, 1_000_000n);
+
+    const newTreasury = Keypair.generate();
+    const newTreasuryAccount = await fundTokenAccount(v.collateralMint, newTreasury.publicKey, 0n);
+    const oldTreasuryAccount = await fundTokenAccount(v.collateralMint, funder.publicKey, 0n);
+    const redeemerCollateral = await fundTokenAccount(v.collateralMint, depositor.publicKey, 0n);
+
+    // Non-authority cannot rotate the treasury.
+    const stranger = await newDepositor();
+    await expectAnchorError(
+      program.methods
+        .updateVaultTreasury(newTreasury.publicKey)
+        .accounts({ authority: stranger.publicKey, vaultConfig: v.vault })
+        .signers([stranger])
+        .rpc(),
+      "Unauthorized",
+    );
+
+    // The all-zero address is never a valid treasury.
+    await expectAnchorError(
+      program.methods
+        .updateVaultTreasury(PublicKey.default)
+        .accounts({ authority: funder.publicKey, vaultConfig: v.vault })
+        .signers([funder])
+        .rpc(),
+      "InvalidPubkey",
+    );
+
+    // Authority rotates the treasury.
+    await program.methods
+      .updateVaultTreasury(newTreasury.publicKey)
+      .accounts({ authority: funder.publicKey, vaultConfig: v.vault })
+      .signers([funder])
+      .rpc();
+    let config: any = await fetchConfig(v.vault);
+    assert.strictEqual(config.treasury.toBase58(), newTreasury.publicKey.toBase58());
+
+    // Fees now flow to the new treasury: redeem 400_000 shares ->
+    // gross = 400_000, fee = ceil(400_000 * 100 / 10_000) = 4_000, net = 396_000.
+    await doRedeem(v, depositor, 400_000n, redeemerCollateral, newTreasuryAccount);
+    assert.strictEqual(await tokenBalance(newTreasuryAccount), 4_000n);
+    assert.strictEqual(await tokenBalance(redeemerCollateral), 396_000n);
+
+    // The old treasury account is no longer accepted as the fee recipient.
+    await expectAnchorError(
+      doRedeem(v, depositor, 100n, redeemerCollateral, oldTreasuryAccount),
+      "InvalidTreasuryAccount",
+    );
+    config = await fetchConfig(v.vault);
+    assert.strictEqual(config.treasury.toBase58(), newTreasury.publicKey.toBase58());
+  });
+
   it("publish_proof: anyone can publish; fields match on-chain state", async () => {
     const v = await initVault();
     const depositor = await newDepositor();

@@ -58,6 +58,8 @@ describe("alchemy_dynamic", () => {
     sourceName?: string;
     oracleAdapter?: PublicKey;
     tokenProgram?: PublicKey;
+    /** Token program the mint itself is created under (default Token-2022). */
+    mintTokenProgram?: PublicKey;
     authority?: Keypair;
   } = {}): Promise<Dynamic> {
     const mint = Keypair.generate();
@@ -69,7 +71,7 @@ describe("alchemy_dynamic", () => {
       6,
       mint,
       undefined,
-      TOKEN_2022_PROGRAM_ID,
+      opts.mintTokenProgram ?? TOKEN_2022_PROGRAM_ID,
     );
     const [configPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("dynamic"), mint.publicKey.toBuffer()],
@@ -177,6 +179,16 @@ describe("alchemy_dynamic", () => {
     // Legacy token program is rejected: Token-2022 only.
     await expectAnchorError(
       initDynamic({ tokenProgram: TOKEN_PROGRAM_ID }),
+      "NotToken2022",
+    );
+    // A legacy SPL Token *mint* is rejected even when the Token-2022 program
+    // account is passed: the program checks the mint's actual owner, not
+    // just the supplied token_program account.
+    await expectAnchorError(
+      initDynamic({
+        mintTokenProgram: TOKEN_PROGRAM_ID,
+        tokenProgram: TOKEN_2022_PROGRAM_ID,
+      }),
       "NotToken2022",
     );
 
@@ -369,6 +381,23 @@ describe("alchemy_dynamic", () => {
     // The new authority can ingest.
     await ingest(dyn, { value: 9n, sourceTs: nowSec() - 5, authority: successor });
     assert.strictEqual(BigInt((await fetchConfig(dyn)).updateCount.toString()), 1n);
+  });
+
+  it("rejects rotating the update authority to the default pubkey", async () => {
+    // Rotating to the default pubkey would brick admin: pause could never be
+    // lifted afterwards, since no key can sign as the default pubkey.
+    const dyn = await initDynamic({});
+    const brick = program.methods
+      .updateDynamicAuthority(PublicKey.default)
+      .accounts({
+        updateAuthority: payer,
+        dynamicConfig: dyn.configPda,
+        mint: dyn.mint.publicKey,
+      })
+      .rpc();
+    await expectAnchorError(brick, "InvalidAuthority");
+    const config = await fetchConfig(dyn);
+    assert.strictEqual(config.updateAuthority.toBase58(), payer.toBase58());
   });
 
   it("rejects ingest from a non-authority", async () => {

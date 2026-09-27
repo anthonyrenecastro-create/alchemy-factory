@@ -53,10 +53,18 @@ pub mod alchemy_factory {
     /// Rotate the experiment authority. Only the current authority may call.
     /// The PDA address itself is stable across rotation (it was derived from
     /// the *original* authority); the live authority is the `authority` field.
+    ///
+    /// The default pubkey is rejected as the new authority: rotating to it
+    /// would permanently brick admin (no key can ever sign as the default
+    /// pubkey).
     pub fn update_authorities(
         ctx: Context<UpdateAuthorities>,
         new_authority: Pubkey,
     ) -> Result<()> {
+        require!(
+            new_authority != Pubkey::default(),
+            FactoryError::InvalidAuthority
+        );
         let old_authority = ctx.accounts.experiment.authority;
         ctx.accounts.experiment.authority = new_authority;
         emit!(AuthoritiesUpdated {
@@ -172,4 +180,6 @@ pub enum FactoryError {
     Unauthorized,
     #[msg("Arithmetic overflow or underflow.")]
     MathOverflow,
+    #[msg("New authority must not be the default pubkey (it would brick admin).")]
+    InvalidAuthority,
 }

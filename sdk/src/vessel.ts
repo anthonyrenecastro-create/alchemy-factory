@@ -57,6 +57,33 @@ export interface VesselState {
   assetCount: number;
 }
 
+/**
+ * Token-2022 mint extensions the vessel accepts on custodied asset mints.
+ * Mirrors the on-chain allow-list enforced by `deposit_asset` (internal
+ * security review 2026-09-27 — our own review, not an external audit).
+ * Everything else — PermanentDelegate, TransferHook, TransferFeeConfig,
+ * NonTransferable, DefaultAccountState, the confidential suite, and the rest
+ * — is rejected on-chain with `InvalidAssetMint`.
+ */
+export const ALLOWED_ASSET_MINT_EXTENSIONS: readonly string[] = [
+  'MetadataPointer',
+  'TokenMetadata',
+  'MintCloseAuthority',
+];
+
+/**
+ * Reject a mint carrying any extension outside the allow-list. Throws
+ * INVALID_ASSET_MINT naming the offending extension — the simulation
+ * equivalent of on-chain `deposit_asset`'s extension gate.
+ */
+export function assertAllowedAssetMintExtensions(extensionNames: string[]): void {
+  for (const name of extensionNames) {
+    if (!ALLOWED_ASSET_MINT_EXTENSIONS.includes(name)) {
+      throw new Error(`INVALID_ASSET_MINT: extension '${name}' is not accepted for vessel custody`);
+    }
+  }
+}
+
 export function createVesselState(config: VesselConfig, owner: string): VesselState {
   if (!config.custodyProgram) throw new Error('INVALID_CUSTODY_PROGRAM');
   if (!config.depositAuthority) throw new Error('INVALID_DEPOSIT_AUTHORITY');
@@ -96,10 +123,21 @@ function cloneHoldings(state: VesselState): VesselHolding[] {
   return state.holdings.map((h) => ({ ...h }));
 }
 
-export function deposit(state: VesselState, caller: string, mint: string, amount: bigint): VesselState {
+export function deposit(
+  state: VesselState,
+  caller: string,
+  mint: string,
+  amount: bigint,
+  opts?: { mintExtensions?: string[] },
+): VesselState {
   if (amount <= 0n) throw new Error('DEPOSIT_AMOUNT_NON_POSITIVE');
   const check = canDeposit(state, caller);
   if (!check.allowed) throw new Error(`DEPOSIT_NOT_PERMITTED: ${check.reason}`);
+  // Mirrors the on-chain extension gate in `deposit_asset`. The simulation
+  // cannot read mint data itself, so extensions must be supplied by the
+  // caller; when omitted the check is skipped (a bare mint with no
+  // extensions always passes on-chain).
+  if (opts?.mintExtensions) assertAllowedAssetMintExtensions(opts.mintExtensions);
   const holdings = cloneHoldings(state);
   let assetCount = state.assetCount;
   let holding = holdings.find((h) => h.mint === mint);
@@ -133,8 +171,8 @@ export function withdraw(state: VesselState, caller: string, mint: string, amoun
  * Simulate a token transfer straight into the custody PDA, bypassing the
  * program (e.g. someone sends tokens to the custody account address
  * directly). On-chain this desynchronizes the ledger: the next deposit or
- * withdrawal fails with HoldingMismatch, and v1 has no sweep instruction.
- * `delta` must keep the custody balance non-negative.
+ * withdrawal fails with HoldingMismatch. `adoptStrayAssets` (below) is the
+ * recovery path. `delta` must keep the custody balance non-negative.
  */
 export function applyExternalBalanceChange(state: VesselState, mint: string, delta: bigint): VesselState {
   const holdings = cloneHoldings(state);
@@ -144,6 +182,57 @@ export function applyExternalBalanceChange(state: VesselState, mint: string, del
   if (next < 0n) throw new Error('EXTERNAL_CHANGE_UNDERFLOW');
   holding.custodyBalance = next;
   return { ...state, holdings };
+}
+
+/**
+ * Simulate on-chain `adopt_stray_assets`: credit a stray custody balance
+ * (tokens sent straight to the custody PDA, bypassing the program) into the
+ * holding ledger, restoring the holding invariant so deposits and
+ * withdrawals work again. Only the deposit or withdraw authority may call.
+ * The ledger is only ever written UP to the custody balance — never down
+ * (a shortfall throws HOLDING_MISMATCH, mirroring on-chain).
+ */
+export function adoptStrayAssets(state: VesselState, caller: string, mint: string): VesselState {
+  const isAuthority =
+    caller === state.config.depositAuthority || caller === state.config.withdrawAuthority;
+  if (!isAuthority) throw new Error('ADOPT_NOT_PERMITTED: only a vessel authority may adopt stray assets.');
+  const holdings = cloneHoldings(state);
+  const holding = holdings.find((h) => h.mint === mint);
+  if (!holding) throw new Error('ASSET_NOT_HELD');
+  if (holding.custodyBalance < holding.amount) throw new Error('HOLDING_MISMATCH');
+  holding.amount = holding.custodyBalance;
+  assertHoldingInvariant(holding);
+  return { ...state, holdings };
+}
+
+/**
+ * Rotate the deposit authority. Only the current owner may call — mirrors
+ * on-chain `update_deposit_authority`. Without rotation, a lost authority
+ * key would lock the vessel's flows forever.
+ */
+export function updateDepositAuthority(
+  state: VesselState,
+  caller: string,
+  newAuthority: string,
+): VesselState {
+  if (caller !== state.owner) throw new Error('ROTATE_NOT_PERMITTED: only the vessel owner may rotate authorities.');
+  if (!newAuthority) throw new Error('INVALID_DEPOSIT_AUTHORITY');
+  return { ...state, config: { ...state.config, depositAuthority: newAuthority } };
+}
+
+/**
+ * Rotate the withdraw authority. Only the current owner may call — mirrors
+ * on-chain `update_withdraw_authority`. Without rotation, a lost withdraw
+ * key would lock the vessel's funds forever.
+ */
+export function updateWithdrawAuthority(
+  state: VesselState,
+  caller: string,
+  newAuthority: string,
+): VesselState {
+  if (caller !== state.owner) throw new Error('ROTATE_NOT_PERMITTED: only the vessel owner may rotate authorities.');
+  if (!newAuthority) throw new Error('INVALID_WITHDRAW_AUTHORITY');
+  return { ...state, config: { ...state.config, withdrawAuthority: newAuthority } };
 }
 
 export interface OwnershipTransferSummary {

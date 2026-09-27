@@ -41,7 +41,7 @@ the browser must never hold the API key.
 ## Build & test
 
 ```bash
-# Simulation engine (41 tests, all offline)
+# Simulation engine (142 tests, all offline)
 cd sdk && npm install && npm test
 
 # Frontend
@@ -159,6 +159,35 @@ go-ahead — no exceptions.
   green on the exact commit, (2) the program deployed to devnet with a real
   end-to-end devnet transaction succeeding. Until then, use the SDK/holder
   simulators only.
+
+## Stage 4 security review — operator-facing behavior changes (2026-09-27)
+
+Internal adversarial review (14 findings, all fixed; details in
+[MAINNET_READINESS.md](MAINNET_READINESS.md) §2 — our own review, not an
+external audit). Behavior changes operators must know:
+
+- **Vault:** new authority-only `update_vault_treasury` instruction (zero
+  address rejected). Curve: authority rotation now rejects the zero address;
+  sells whose proceeds round to zero are rejected (`ZeroAmount`) instead of
+  burning tokens for nothing.
+- **Vessel:** deposits now reject asset mints with hostile Token-2022
+  extensions (permanent delegate, freeze authority, transfer hooks/fees —
+  `InvalidAssetMint`); only metadata-pointer / token-metadata /
+  mint-close-authority are accepted. New `adopt_stray_assets` instruction
+  (deposit or withdraw authority) recovers tokens sent directly to custody
+  PDAs into the ledger. New owner-gated `update_deposit_authority` /
+  `update_withdraw_authority` (zero address rejected).
+- **ProofX:** `initialize_proofx` now requires the mint's current mint
+  authority as a signer (anti-squatting). Flow: create the mint with yourself
+  as mint authority → initialize → set the mint authority to the config PDA.
+- **Decay:** `close_decay` now requires the schedule to be fully settled
+  (run a final crank first) — `ScheduleNotSettled` otherwise.
+- **Dynamic:** `initialize_dynamic` now verifies the mint is actually owned by
+  the Token-2022 program (`NotToken2022` otherwise).
+- **All programs:** authority rotation rejects the all-zero pubkey
+  (`InvalidAuthority`/`InvalidPubkey`) — a rotation typo to address zero can no
+  longer brick admin. (A typo to a *valid-but-wrong* address still locks out
+  admin; two-step propose/accept is deferred to pre-mainnet hardening.)
 
 ## Secrets
 

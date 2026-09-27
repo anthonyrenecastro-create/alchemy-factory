@@ -295,6 +295,11 @@ pub mod alchemy_curve {
         let amount_u128 = amount as u128;
         let supply: u128 = ctx.accounts.mint.supply as u128;
         let proceeds = sell_proceeds(&ctx.accounts.curve_config.curve, supply, amount_u128)?;
+        // A sell that quotes zero proceeds must fail closed: without this, a
+        // trader could burn tokens and receive nothing (the price-impact rail
+        // is also skipped when the floored average price is zero, so no other
+        // guard catches it). Mirrors the vault's gross > 0 dust rejection.
+        require!(proceeds > 0, CurveError::ZeroAmount);
         let fee = fee_for(proceeds, ctx.accounts.curve_config.fee_bps)?;
         let user_gets = proceeds
             .checked_sub(fee)
@@ -421,10 +426,17 @@ pub mod alchemy_curve {
     }
 
     /// Rotate the admin authority. Authority only. Emits the change.
+    ///
+    /// The all-zero address is rejected: rotating to it would permanently
+    /// lock out every admin instruction (params, treasury, withdrawals).
     pub fn update_authority(
         ctx: Context<CurveAdmin>,
         new_authority: Pubkey,
     ) -> Result<()> {
+        require!(
+            new_authority != Pubkey::default(),
+            CurveError::InvalidPubkey
+        );
         let old = ctx.accounts.curve_config.authority;
         ctx.accounts.curve_config.authority = new_authority;
         emit!(CurveAuthorityUpdated {
@@ -796,4 +808,6 @@ pub enum CurveError {
     InvalidSellerTokenAccount,
     #[msg("Seller token balance is insufficient for this sale.")]
     InsufficientTokenBalance,
+    #[msg("Pubkey must not be the default (all-zero) address.")]
+    InvalidPubkey,
 }

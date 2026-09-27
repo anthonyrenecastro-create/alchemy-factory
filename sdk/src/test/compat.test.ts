@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkCompatibility, recommendExtensions,
+  checkCompatibility, checkVaultCollateral, recommendExtensions,
   type Token2022Extension, type CompatReport,
 } from '../compat.js';
 
@@ -328,5 +328,50 @@ describe('checker self-consistency', () => {
     assert.equal(a.overall, b.overall);
     assert.equal(a.blocked, b.blocked);
     assert.equal(a.protocolValid, b.protocolValid);
+  });
+});
+
+// Security-review regression tests (our own review, not an external audit):
+// checkVaultCollateral must mirror the on-chain collateral allow-list in
+// alchemy_vault's validate_collateral_mint EXACTLY, so the studio surfaces
+// the same accept/reject verdict the program enforces.
+describe('checkVaultCollateral (on-chain allow-list mirror)', () => {
+  it('accepts empty and metadata-only extension sets', () => {
+    assert.deepEqual(checkVaultCollateral([]), { allowed: true, rejected: [] });
+    assert.deepEqual(
+      checkVaultCollateral(['metadata-pointer', 'token-metadata']),
+      { allowed: true, rejected: [] },
+    );
+  });
+
+  it('accepts mint-close-authority (the third allow-listed extension)', () => {
+    const v = checkVaultCollateral(['metadata-pointer', 'token-metadata', 'mint-close-authority']);
+    assert.equal(v.allowed, true);
+    assert.deepEqual(v.rejected, []);
+  });
+
+  it('rejects permanent-delegate, transfer-fee, and transfer-hook exactly like the program', () => {
+    const hostile = ['permanent-delegate', 'transfer-fee', 'transfer-hook'] as Token2022Extension[];
+    for (const ext of hostile) {
+      const v = checkVaultCollateral(['metadata-pointer', ext]);
+      assert.equal(v.allowed, false, ext);
+      assert.deepEqual(v.rejected, [ext]);
+    }
+  });
+
+  it('rejects every other known extension', () => {
+    const hostile: Token2022Extension[] = [
+      'non-transferable', 'confidential-transfer', 'confidential-transfer-fee',
+      'interest-bearing', 'scaled-ui-amount', 'default-account-state-frozen',
+      'immutable-owner', 'memo-transfer', 'pausable', 'permissioned-burn', 'cpi-guard',
+    ];
+    const v = checkVaultCollateral(hostile);
+    assert.equal(v.allowed, false);
+    assert.deepEqual(v.rejected, hostile);
+  });
+
+  it('deduplicates repeated extensions', () => {
+    const v = checkVaultCollateral(['transfer-fee', 'transfer-fee']);
+    assert.deepEqual(v.rejected, ['transfer-fee']);
   });
 });

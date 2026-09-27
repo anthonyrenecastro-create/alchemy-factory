@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   createVesselState, deposit, withdraw, transferOwnership, canDeposit, canWithdraw,
   holdingOf, custodyBalanceOf, applyExternalBalanceChange,
+  assertAllowedAssetMintExtensions, adoptStrayAssets,
+  updateDepositAuthority, updateWithdrawAuthority,
   type VesselConfig, type VesselState,
 } from '../vessel.js';
 
@@ -159,5 +161,77 @@ describe('ownership transfer', () => {
 
   it('requires a new owner', () => {
     assert.throws(() => transferOwnership(fresh(), ''), /NEW_OWNER_REQUIRED/);
+  });
+});
+
+describe('asset-mint extension gate (mirrors the on-chain allow-list)', () => {
+  it('accepts bare and metadata-only mints; rejects hostile extensions', () => {
+    assert.doesNotThrow(() => assertAllowedAssetMintExtensions([]));
+    assert.doesNotThrow(() =>
+      assertAllowedAssetMintExtensions(['MetadataPointer', 'TokenMetadata', 'MintCloseAuthority']),
+    );
+    assert.throws(() => assertAllowedAssetMintExtensions(['PermanentDelegate']), /INVALID_ASSET_MINT/);
+    assert.throws(() => assertAllowedAssetMintExtensions(['TransferHook']), /INVALID_ASSET_MINT/);
+    assert.throws(() => assertAllowedAssetMintExtensions(['TransferFeeConfig']), /INVALID_ASSET_MINT/);
+    assert.throws(() => assertAllowedAssetMintExtensions(['NonTransferable']), /INVALID_ASSET_MINT/);
+  });
+
+  it('deposit enforces the gate when extensions are supplied', () => {
+    assert.throws(
+      () => deposit(fresh(), DEPOSITOR, MINT_A, 10n, { mintExtensions: ['PermanentDelegate'] }),
+      /INVALID_ASSET_MINT/,
+    );
+    const v = deposit(fresh(), DEPOSITOR, MINT_A, 10n, { mintExtensions: ['TokenMetadata'] });
+    assert.equal(holdingOf(v, MINT_A), 10n);
+    // Omitting extensions preserves the old behavior (bare mint passes).
+    const v2 = deposit(fresh(), DEPOSITOR, MINT_A, 10n);
+    assert.equal(holdingOf(v2, MINT_A), 10n);
+  });
+});
+
+describe('stray-asset adoption', () => {
+  it('either authority can adopt a stray balance; strangers cannot; ledger only moves up', () => {
+    let v = deposit(fresh(), DEPOSITOR, MINT_A, 500n);
+    v = applyExternalBalanceChange(v, MINT_A, 50n);
+    assert.throws(() => adoptStrayAssets(v, ALICE, MINT_A), /ADOPT_NOT_PERMITTED/);
+    assert.throws(() => adoptStrayAssets(v, OWNER, MINT_A), /ADOPT_NOT_PERMITTED/); // owner has no flow rights
+    v = adoptStrayAssets(v, WITHDRAWER, MINT_A);
+    assert.equal(holdingOf(v, MINT_A), 550n);
+    assert.equal(custodyBalanceOf(v, MINT_A), 550n);
+    // Flows work again after adoption.
+    v = withdraw(v, WITHDRAWER, MINT_A, 550n);
+    assert.equal(holdingOf(v, MINT_A), 0n);
+    // No-op when already in sync; the deposit authority may adopt too.
+    v = adoptStrayAssets(v, DEPOSITOR, MINT_A);
+    assert.equal(holdingOf(v, MINT_A), 0n);
+  });
+
+  it('rejects unknown assets', () => {
+    assert.throws(() => adoptStrayAssets(fresh(), WITHDRAWER, MINT_A), /ASSET_NOT_HELD/);
+  });
+});
+
+describe('authority rotation', () => {
+  it('owner rotates authorities; old keys locked out; new keys work; strangers and empty keys rejected', () => {
+    let v = deposit(fresh(), DEPOSITOR, MINT_A, 500n);
+    assert.throws(() => updateDepositAuthority(v, ALICE, ALICE), /ROTATE_NOT_PERMITTED/);
+    assert.throws(() => updateWithdrawAuthority(v, ALICE, ALICE), /ROTATE_NOT_PERMITTED/);
+    assert.throws(() => updateDepositAuthority(v, OWNER, ''), /INVALID_DEPOSIT_AUTHORITY/);
+    assert.throws(() => updateWithdrawAuthority(v, OWNER, ''), /INVALID_WITHDRAW_AUTHORITY/);
+
+    v = updateDepositAuthority(v, OWNER, ALICE);
+    v = updateWithdrawAuthority(v, OWNER, ALICE);
+    assert.equal(canDeposit(v, DEPOSITOR).allowed, false);
+    assert.equal(canWithdraw(v, WITHDRAWER).allowed, false);
+    assert.equal(canDeposit(v, ALICE).allowed, true);
+    assert.equal(canWithdraw(v, ALICE).allowed, true);
+    assert.throws(() => deposit(v, DEPOSITOR, MINT_A, 1n), /DEPOSIT_NOT_PERMITTED/);
+    const v2 = withdraw(v, ALICE, MINT_A, 100n);
+    assert.equal(holdingOf(v2, MINT_A), 400n);
+
+    // Rotation survives ownership transfer: the roles are independent of the owner.
+    const { state: v3 } = transferOwnership(v, ALICE);
+    assert.equal(canDeposit(v3, ALICE).allowed, true);
+    assert.equal(canWithdraw(v3, ALICE).allowed, true);
   });
 });

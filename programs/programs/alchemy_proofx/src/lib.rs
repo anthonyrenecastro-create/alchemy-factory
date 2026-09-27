@@ -76,10 +76,21 @@ pub mod alchemy_proofx {
     /// non-zero; `dispute_window_seconds` must be non-negative. The
     /// Token-2022 program is required.
     ///
+    /// The mint's current mint authority MUST sign: only the mint's
+    /// controller can publish the proofx config for it. Without this, anyone
+    /// could squat the [`b"proofx"`, mint] PDA — pre-registering a config
+    /// with their own verifier and authority — and permanently block the
+    /// legitimate deployment, because there is no close or re-initialize
+    /// path. (The squatted config could never mint, since
+    /// [`mint_from_attestation`] requires the config PDA to be the mint
+    /// authority, but it would brick the mint's proofx deployment forever.)
+    ///
+    /// The intended flow is: create the mint with yourself as mint authority
+    /// → `initialize_proofx` (you sign as mint authority) → set the mint's
+    /// authority to the config PDA.
+    ///
     /// The initializer becomes the config `authority` and may later rotate
-    /// the verifier via [`update_verifier`]. The mint's mint authority is NOT
-    /// checked here — it is enforced by [`mint_from_attestation`], so a
-    /// config can be published before the mint's authority is finalized.
+    /// the verifier via [`update_verifier`].
     ///
     /// Honesty note: the `verifier` key's *signature on the mint transaction*
     /// is what makes an attestation valid. If that key belongs to a human
@@ -121,6 +132,12 @@ pub mod alchemy_proofx {
         require!(
             dispute_window_seconds >= 0,
             ProofxError::InvalidDisputeWindow
+        );
+        // Anti-squatting: only the mint's current mint authority may publish
+        // the config for it (see the doc comment on this instruction).
+        require!(
+            ctx.accounts.mint.mint_authority == Some(ctx.accounts.mint_authority.key()),
+            ProofxError::InvalidMintAuthority
         );
 
         let config = &mut ctx.accounts.proofx_config;
@@ -301,6 +318,11 @@ pub struct InitializeProofx<'info> {
     )]
     pub proofx_config: Account<'info, ProofxConfig>,
     pub mint: InterfaceAccount<'info, Mint>,
+    /// The mint's current mint authority. Must sign: only the mint's
+    /// controller can publish the proofx config for it, which makes config
+    /// squatting (an attacker pre-registering the config PDA for someone
+    /// else's mint) impossible.
+    pub mint_authority: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
@@ -508,4 +530,6 @@ pub enum ProofxError {
     InvalidPrivacyNote,
     #[msg("Dispute window must be non-negative.")]
     InvalidDisputeWindow,
+    #[msg("Only the mint's current mint authority may initialize the proofx config for it.")]
+    InvalidMintAuthority,
 }

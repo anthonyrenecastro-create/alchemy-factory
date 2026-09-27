@@ -10,10 +10,15 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import {
   TOKEN_2022_PROGRAM_ID,
+  ExtensionType,
   createAccount,
+  createInitializeMintInstruction,
+  createInitializePermanentDelegateInstruction,
   createMint,
   getAccount,
+  getMintLen,
   mintTo,
+  transferChecked,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import {
@@ -21,6 +26,8 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
+  Transaction,
+  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 
 // ---------------------------------------------------------------------------
@@ -195,6 +202,37 @@ describe("alchemy_vessel", () => {
       })
       .signers([withdrawer])
       .rpc();
+  }
+
+  /** Create a Token-2022 mint carrying a permanent-delegate extension. */
+  async function createMintWithPermanentDelegate(): Promise<PublicKey> {
+    const delegate = Keypair.generate().publicKey;
+    const mint = Keypair.generate();
+    const mintLen = getMintLen([ExtensionType.PermanentDelegate]);
+    const lamports = await connection.getMinimumBalanceForRentExemption(mintLen);
+    const tx = new Transaction().add(
+      SystemProgram.createAccount({
+        fromPubkey: funder.publicKey,
+        newAccountPubkey: mint.publicKey,
+        space: mintLen,
+        lamports,
+        programId: TOKEN_2022_PROGRAM_ID,
+      }),
+      createInitializePermanentDelegateInstruction(
+        mint.publicKey,
+        delegate,
+        TOKEN_2022_PROGRAM_ID,
+      ),
+      createInitializeMintInstruction(
+        mint.publicKey,
+        6,
+        funder.publicKey,
+        null,
+        TOKEN_2022_PROGRAM_ID,
+      ),
+    );
+    await sendAndConfirmTransaction(connection, tx, [funder, mint]);
+    return mint.publicKey;
   }
 
   const tokenBalance = async (account: PublicKey): Promise<bigint> => {
@@ -529,5 +567,208 @@ describe("alchemy_vessel", () => {
     assert.strictEqual(await tokenBalance(custodyPda(v.vessel, assetMint)), 0n);
     const config: any = await fetchVessel(v.vessel);
     assert.strictEqual(BigInt(config.assetCount.toString()), 1n);
+  });
+
+  it("rejects container transfer by a non-owner", async () => {
+    const v = await initVessel();
+    const stranger = Keypair.generate();
+    await expectAnchorError(
+      program.methods
+        .transferContainer(Keypair.generate().publicKey)
+        .accounts({
+          currentOwner: stranger.publicKey,
+          vessel: v.vessel,
+          containerMint: v.containerMint,
+        })
+        .signers([stranger])
+        .rpc(),
+      "Unauthorized",
+    );
+  });
+
+  it("rejects asset mints with hostile extensions (permanent delegate)", async () => {
+    const v = await initVessel();
+    // A permanent delegate could drain the custody PDA at will, so the
+    // vessel refuses to custody such mints (internal review 2026-09-27).
+    const hostileMint = await createMintWithPermanentDelegate();
+    const depositorAccount = await fundTokenAccount(
+      hostileMint,
+      v.depositAuthority.publicKey,
+      1_000n,
+    );
+    await expectAnchorError(
+      doDeposit(v, hostileMint, v.depositAuthority, depositorAccount, 100n),
+      "InvalidAssetMint",
+    );
+    // The failed deposit left no state behind: the holding PDA was never created.
+    let holdingExists = true;
+    try {
+      await fetchHolding(holdingPda(v.vessel, hostileMint));
+    } catch {
+      holdingExists = false;
+    }
+    assert.strictEqual(holdingExists, false, "holding PDA must not exist after rejected deposit");
+  });
+
+  it("adopt_stray_assets recovers from a direct-transfer desync (griefing)", async () => {
+    const v = await initVessel();
+    const assetMint = await makeAssetMint();
+    const depositorAccount = await fundTokenAccount(
+      assetMint,
+      v.depositAuthority.publicKey,
+      1_000n,
+    );
+    await doDeposit(v, assetMint, v.depositAuthority, depositorAccount, 400n);
+    const custody = custodyPda(v.vessel, assetMint);
+
+    // Griefing: anyone can send tokens straight to the custody PDA,
+    // bypassing the program and desynchronizing the ledger.
+    const griefer = Keypair.generate();
+    const grieferAccount = await fundTokenAccount(assetMint, griefer.publicKey, 100n);
+    await transferChecked(
+      connection,
+      funder,
+      grieferAccount,
+      assetMint,
+      custody,
+      griefer,
+      50n,
+      6,
+      undefined,
+      undefined,
+      TOKEN_2022_PROGRAM_ID,
+    );
+    assert.strictEqual(await tokenBalance(custody), 450n);
+
+    // The invariant now bricks every deposit and withdrawal for the asset.
+    await expectAnchorError(
+      doDeposit(v, assetMint, v.depositAuthority, depositorAccount, 10n),
+      "HoldingMismatch",
+    );
+    const destination = await fundTokenAccount(assetMint, Keypair.generate().publicKey, 0n);
+    await expectAnchorError(
+      doWithdraw(v, assetMint, v.withdrawAuthority, destination, 10n),
+      "HoldingMismatch",
+    );
+
+    const adoptAccounts = {
+      vessel: v.vessel,
+      containerMint: v.containerMint,
+      assetMint,
+      holding: holdingPda(v.vessel, assetMint),
+      custodyAccount: custody,
+      tokenProgram: TOKEN_2022_PROGRAM_ID,
+    };
+    const doAdopt = (authority: Keypair) =>
+      program.methods
+        .adoptStrayAssets()
+        .accounts({ authority: authority.publicKey, ...adoptAccounts })
+        .signers([authority])
+        .rpc();
+
+    // A stranger cannot adopt; either vessel authority can.
+    const stranger = Keypair.generate();
+    const strangerSig = await connection.requestAirdrop(stranger.publicKey, LAMPORTS_PER_SOL);
+    await connection.confirmTransaction(strangerSig);
+    await expectAnchorError(doAdopt(stranger), "Unauthorized");
+    await doAdopt(v.withdrawAuthority);
+
+    // The stray 50 is credited to the ledger; flows work again.
+    const holding: any = await fetchHolding(holdingPda(v.vessel, assetMint));
+    assert.strictEqual(BigInt(holding.amount.toString()), 450n);
+    await doDeposit(v, assetMint, v.depositAuthority, depositorAccount, 50n);
+    assert.strictEqual(await tokenBalance(custody), 500n);
+    await doWithdraw(v, assetMint, v.withdrawAuthority, destination, 500n);
+    assert.strictEqual(await tokenBalance(destination), 500n);
+
+    // Adopting with no stray balance is a harmless no-op.
+    await doAdopt(v.depositAuthority);
+    const holdingAfter: any = await fetchHolding(holdingPda(v.vessel, assetMint));
+    assert.strictEqual(BigInt(holdingAfter.amount.toString()), 0n);
+  });
+
+  it("owner can rotate deposit/withdraw authorities; old keys locked out", async () => {
+    const v = await initVessel();
+    const assetMint = await makeAssetMint();
+    const depositorAccount = await fundTokenAccount(
+      assetMint,
+      v.depositAuthority.publicKey,
+      1_000n,
+    );
+
+    const newDepositor = Keypair.generate();
+    const newWithdrawer = Keypair.generate();
+    for (const kp of [newDepositor, newWithdrawer]) {
+      const sig = await connection.requestAirdrop(kp.publicKey, LAMPORTS_PER_SOL);
+      await connection.confirmTransaction(sig);
+    }
+    const rotateAccounts = {
+      currentOwner: funder.publicKey,
+      vessel: v.vessel,
+      containerMint: v.containerMint,
+    };
+
+    // Non-owner cannot rotate.
+    const stranger = Keypair.generate();
+    await expectAnchorError(
+      program.methods
+        .updateDepositAuthority(newDepositor.publicKey)
+        .accounts({
+          currentOwner: stranger.publicKey,
+          vessel: v.vessel,
+          containerMint: v.containerMint,
+        })
+        .signers([stranger])
+        .rpc(),
+      "Unauthorized",
+    );
+    // The default pubkey is rejected: the role cannot be renounced by accident.
+    await expectAnchorError(
+      program.methods
+        .updateDepositAuthority(PublicKey.default)
+        .accounts(rotateAccounts)
+        .signers([funder])
+        .rpc(),
+      "InvalidPubkey",
+    );
+    await expectAnchorError(
+      program.methods
+        .updateWithdrawAuthority(PublicKey.default)
+        .accounts(rotateAccounts)
+        .signers([funder])
+        .rpc(),
+      "InvalidPubkey",
+    );
+
+    await program.methods
+      .updateDepositAuthority(newDepositor.publicKey)
+      .accounts(rotateAccounts)
+      .signers([funder])
+      .rpc();
+    await program.methods
+      .updateWithdrawAuthority(newWithdrawer.publicKey)
+      .accounts(rotateAccounts)
+      .signers([funder])
+      .rpc();
+    const config: any = await fetchVessel(v.vessel);
+    assert.strictEqual(config.depositAuthority.toBase58(), newDepositor.publicKey.toBase58());
+    assert.strictEqual(config.withdrawAuthority.toBase58(), newWithdrawer.publicKey.toBase58());
+
+    // Old deposit authority is locked out; the new one works.
+    await expectAnchorError(
+      doDeposit(v, assetMint, v.depositAuthority, depositorAccount, 10n),
+      "Unauthorized",
+    );
+    const newDepositorAccount = await fundTokenAccount(assetMint, newDepositor.publicKey, 500n);
+    await doDeposit(v, assetMint, newDepositor, newDepositorAccount, 200n);
+
+    // Old withdraw authority is locked out; the new one works.
+    const destination = await fundTokenAccount(assetMint, Keypair.generate().publicKey, 0n);
+    await expectAnchorError(
+      doWithdraw(v, assetMint, v.withdrawAuthority, destination, 10n),
+      "Unauthorized",
+    );
+    await doWithdraw(v, assetMint, newWithdrawer, destination, 200n);
+    assert.strictEqual(await tokenBalance(destination), 200n);
   });
 });

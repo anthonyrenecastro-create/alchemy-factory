@@ -338,9 +338,9 @@ pub mod alchemy_vault {
         config.collateral_mint = collateral_mint_key;
         config.share_mint = share_mint_pda;
         config.authority = authority_key;
-        // Fee recipient defaults to the initializing authority. There is no
-        // treasury-rotation instruction in v1; rotating the vault authority
-        // does not move already-accrued fees.
+        // Fee recipient defaults to the initializing authority; the current
+        // authority may rotate it later with `update_vault_treasury`.
+        // Rotating the vault authority does not move already-accrued fees.
         config.treasury = authority_key;
         config.total_collateral = 0;
         config.total_shares = 0;
@@ -709,6 +709,32 @@ pub mod alchemy_vault {
         });
         Ok(())
     }
+
+    /// Rotate the fee-recipient treasury. Current authority only.
+    ///
+    /// The treasury pubkey recorded at init binds every future fee payout
+    /// (redeem requires the fee account to be owned by it). Without a
+    /// rotation path, a lost or compromised treasury key would strand all
+    /// future fees in token accounts no one can move. Rotation takes effect
+    /// for redemptions after this transaction; fees already paid out are
+    /// unaffected.
+    pub fn update_vault_treasury(
+        ctx: Context<VaultAdmin>,
+        new_treasury: Pubkey,
+    ) -> Result<()> {
+        require!(
+            new_treasury != Pubkey::default(),
+            VaultError::InvalidPubkey
+        );
+        let old_treasury = ctx.accounts.vault_config.treasury;
+        ctx.accounts.vault_config.treasury = new_treasury;
+        emit!(VaultTreasuryUpdated {
+            vault: ctx.accounts.vault_config.key(),
+            old_treasury,
+            new_treasury,
+        });
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -979,8 +1005,8 @@ pub struct VaultConfig {
     pub share_mint: Pubkey,
     /// Admin authority.
     pub authority: Pubkey,
-    /// Fee recipient (defaults to the initializing authority; v1 has no
-    /// treasury-rotation instruction).
+    /// Fee recipient (defaults to the initializing authority; rotated with
+    /// `update_vault_treasury`, which the current authority may call).
     pub treasury: Pubkey,
     /// Total collateral units held (bookkeeping; verified against the token
     /// account by the solvency invariant).
@@ -1069,6 +1095,13 @@ pub struct VaultAuthorityUpdated {
     pub vault: Pubkey,
     pub old_authority: Pubkey,
     pub new_authority: Pubkey,
+}
+
+#[event]
+pub struct VaultTreasuryUpdated {
+    pub vault: Pubkey,
+    pub old_treasury: Pubkey,
+    pub new_treasury: Pubkey,
 }
 
 // ---------------------------------------------------------------------------

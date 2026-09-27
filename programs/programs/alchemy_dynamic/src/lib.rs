@@ -56,6 +56,14 @@ pub mod alchemy_dynamic {
             ctx.accounts.token_program.key() == token_2022::ID,
             DynamicError::NotToken2022
         );
+        // The mint itself must be owned by the Token-2022 program: checking
+        // only the passed `token_program` account is not enough, because
+        // `InterfaceAccount<Mint>` also deserializes legacy SPL Token mints.
+        require_keys_eq!(
+            *ctx.accounts.mint.to_account_info().owner,
+            token_2022::ID,
+            DynamicError::NotToken2022
+        );
         require!(max_supply > 0, DynamicError::InvalidMaxSupply);
         require!(
             update_frequency_seconds > 0,
@@ -193,10 +201,18 @@ pub mod alchemy_dynamic {
     }
 
     /// Rotate the update authority. Current update authority only.
+    ///
+    /// The default pubkey is rejected as the new authority: rotating to it
+    /// would permanently brick admin (pause could never be lifted, since no
+    /// key can sign as the default pubkey).
     pub fn update_dynamic_authority(
         ctx: Context<DynamicAdmin>,
         new_authority: Pubkey,
     ) -> Result<()> {
+        require!(
+            new_authority != Pubkey::default(),
+            DynamicError::InvalidAuthority
+        );
         let old = ctx.accounts.dynamic_config.update_authority;
         ctx.accounts.dynamic_config.update_authority = new_authority;
         emit!(DynamicAuthorityUpdated {
@@ -419,4 +435,6 @@ pub enum DynamicError {
     InvalidStaleThreshold,
     #[msg("This program only operates with the Token-2022 program.")]
     NotToken2022,
+    #[msg("New authority must not be the default pubkey (it would brick admin).")]
+    InvalidAuthority,
 }
