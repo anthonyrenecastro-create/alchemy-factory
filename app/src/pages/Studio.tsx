@@ -20,6 +20,7 @@ import {
   type MechanicKind, type HolderRight, type CompatibilityWarning, type ExperimentConfig,
 } from '@sdk';
 import { HonestyBanner } from '../components/HonestyBanner';
+import { DeployPanel, type CurveInitParams } from '../studio/DeployPanel';
 
 const MECHANICS: { kind: MechanicKind; icon: string; blurb: string }[] = [
   { kind: 'curve', icon: '📈', blurb: 'Price set by an audited curve template (linear or step). Buy/sell against a reserve vault with fees and slippage.' },
@@ -311,6 +312,26 @@ export function Studio() {
   const allRedAcked = redFindings.every((f) => ackedFindings.includes(f.subject));
   const deployBlocked = (compatReport?.blocked ?? false) && !allRedAcked;
 
+  // Params for the live devnet curve pilot (step 4 of DeployPanel). Only built
+  // when the curve config validates — otherwise the pilot stays gated.
+  const curveInit = useMemo<CurveInitParams | null>(() => {
+    if (mechanic !== 'curve' || !experiment) return null;
+    const cfg = buildCurveConfig(forms.curve);
+    if (validateCurveConfig(cfg).length > 0) return null;
+    const decimals = experiment.decimals;
+    if (cfg.kind === 'linear') {
+      return { kind: 'linear', decimals, slope: cfg.slope, intercept: cfg.basePrice, steps: [], feeBps: cfg.feeBps };
+    }
+    return {
+      kind: 'step',
+      decimals,
+      slope: 0n,
+      intercept: 0n,
+      steps: cfg.steps.map((s) => ({ supply: s.supplyUpperBound, price: s.price })),
+      feeBps: cfg.feeBps,
+    };
+  }, [mechanic, forms.curve, experiment]);
+
   const pick = (k: MechanicKind) => {
     setMechanic(k);
     setAckedFindings([]);
@@ -413,6 +434,7 @@ export function Studio() {
       {step === 2 && mechanic && (
         <div>
           <SimPanel mechanic={mechanic} forms={forms} />
+          <DeployPanel simulated mechanic={mechanic} experiment={experiment} curveInit={curveInit} />
           <div className="grid cols-2 mt">
             <div className="card">
               <h3 style={{ marginTop: 0 }}>Estimated creation cost <span className="badge devnet">devnet</span></h3>

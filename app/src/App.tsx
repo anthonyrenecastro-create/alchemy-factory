@@ -1,10 +1,22 @@
 import { HashRouter, NavLink, Route, Routes, Navigate } from 'react-router-dom';
-import { SolanaWalletProviders, RPC_ENDPOINT, isDefaultEndpoint } from './wallet';
+import { SolanaWalletProviders } from './wallet';
+import { RpcProvider } from './rpc';
+import { RpcStatus } from './components/RpcStatus';
 import { Studio } from './pages/Studio';
 import { Holder } from './pages/Holder';
 import { TokenDetail } from './pages/TokenDetail';
 import { Jubilee } from './pages/Jubilee';
 import { Vault } from './pages/Vault';
+
+function HexMark() {
+  return (
+    <svg className="hex" width="22" height="24" viewBox="0 0 22 24" fill="none" aria-hidden="true">
+      <path d="M11 1 L20 6.5 V17.5 L11 23 L2 17.5 V6.5 Z" stroke="#00e5ff" strokeWidth="1.6" />
+      <path d="M11 6 L15.5 8.8 V14.2 L11 17 L6.5 14.2 V8.8 Z" stroke="#00e5ff" strokeWidth="1" opacity="0.55" />
+      <circle cx="11" cy="11.5" r="1.4" fill="#00e5ff" />
+    </svg>
+  );
+}
 
 function Home() {
   return (
@@ -14,6 +26,7 @@ function Home() {
         A Solana-first creator studio and companion holder app for experimental token mechanics.
         Design in the studio, simulate the economics for free, and inspect any token's authorities,
         collateral, and risks before signing. Devnet-first; mainnet always requires explicit confirmation.
+        The studio now includes a live devnet test → deploy pipeline — the bonding-curve mechanic is the first live pilot.
       </p>
       <div className="grid cols-3">
         <NavLink to="/studio" style={{ color: 'inherit' }}>
@@ -59,18 +72,17 @@ function Home() {
 
 export function App() {
   return (
-    <SolanaWalletProviders>
-      <HashRouter>
+    <RpcProvider>
+      <SolanaWalletProviders>
+        <HashRouter>
         <nav className="nav">
-          <span className="brand"><span className="alchemy">⚗ ALCHEMY</span> FACTORY</span>
+          <span className="brand"><HexMark /><span className="alchemy">ALCHEMY</span> FACTORY</span>
           <NavLink className="navlink" to="/studio">Studio</NavLink>
           <NavLink className="navlink" to="/holder">Holder</NavLink>
           <NavLink className="navlink" to="/vault">Vault</NavLink>
           <NavLink className="navlink" to="/jubilee">Jubilee</NavLink>
           <span className="spacer" />
-          <span className="rpc-badge mono" title="RPC endpoint (no API keys in the bundle)">
-            {isDefaultEndpoint() ? 'devnet (default RPC)' : RPC_ENDPOINT}
-          </span>
+          <RpcStatus />
         </nav>
         <Routes>
           <Route path="/" element={<Home />} />
@@ -82,6 +94,7 @@ export function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </HashRouter>
-    </SolanaWalletProviders>
+      </SolanaWalletProviders>
+    </RpcProvider>
   );
 }
