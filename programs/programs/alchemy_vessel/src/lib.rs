@@ -550,7 +550,8 @@ pub mod alchemy_vessel {
 ///   suite, CPI guard, interest-bearing / scaled-UI-amount, pausable, group
 ///   extensions: all freeze, block, or otherwise complicate custody flows.
 fn validate_asset_mint(asset_mint: &InterfaceAccount<Mint>) -> Result<()> {
-    let data = asset_mint.to_account_info().try_borrow_data()?;
+    let mint_info = asset_mint.to_account_info();
+    let data = mint_info.try_borrow_data()?;
     let state = spl_token_2022::extension::StateWithExtensions::<
         spl_token_2022::state::Mint,
     >::unpack(&data)
