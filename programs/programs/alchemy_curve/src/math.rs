@@ -149,7 +149,7 @@ pub fn buy_cost(curve: &CurveKind, supply: u128, amount: u128) -> Result<u128> {
             let den = 2 * PRICE_SCALE;
             let curve_part = ceil_div(quad, den)?;
             base.checked_add(curve_part)
-                .ok_or(CurveError::MathOverflow)
+                .ok_or(CurveError::MathOverflow.into())
         }
         CurveKind::Step { thresholds } => step_integral(thresholds, supply, amount),
     }
@@ -182,7 +182,7 @@ pub fn sell_proceeds(curve: &CurveKind, supply: u128, amount: u128) -> Result<u1
                 .ok_or(CurveError::MathOverflow)?;
             let curve_part = quad / (2 * PRICE_SCALE); // floor: for the reserve
             base.checked_add(curve_part)
-                .ok_or(CurveError::MathOverflow)
+                .ok_or(CurveError::MathOverflow.into())
         }
         // Integral over [supply - amount, supply): same segment math as buys.
         CurveKind::Step { thresholds } => {

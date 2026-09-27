@@ -92,10 +92,7 @@ pub mod alchemy_curve {
         require!(fee_bps <= 10_000, CurveError::InvalidFeeBps);
 
         // Create the reserve vault: a system-owned PDA that only holds lamports.
-        let vault_bump = *ctx
-            .bumps
-            .get("vault")
-            .ok_or(CurveError::MathOverflow)?;
+        let vault_bump = ctx.bumps.vault;
         let rent_lamports = ctx.accounts.rent.minimum_balance(0);
         let create_ix = system_instruction::create_account(
             &ctx.accounts.authority.key(),
@@ -504,10 +501,10 @@ pub mod alchemy_curve {
 }
 
 /// Native-SOL transfer, optionally signed by a PDA.
-fn transfer_lamports(
-    from: &AccountInfo,
-    to: &AccountInfo,
-    system_program: &AccountInfo,
+fn transfer_lamports<'a>(
+    from: &AccountInfo<'a>,
+    to: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
     lamports: u64,
     signer_seeds: Option<&[&[u8]]>,
 ) -> Result<()> {

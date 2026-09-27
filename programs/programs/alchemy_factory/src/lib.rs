@@ -33,10 +33,7 @@ pub mod alchemy_factory {
         experiment.authority = ctx.accounts.authority.key();
         experiment.holder_rights_hash = holder_rights_hash;
         experiment.created_at = ctx.accounts.clock.unix_timestamp;
-        experiment.bump = *ctx
-            .bumps
-            .get("experiment")
-            .ok_or(FactoryError::MathOverflow)?;
+        experiment.bump = ctx.bumps.experiment;
 
         emit!(ExperimentRegistered {
             experiment: experiment.key(),

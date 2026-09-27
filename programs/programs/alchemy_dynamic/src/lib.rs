@@ -94,10 +94,7 @@ pub mod alchemy_dynamic {
         config.last_update_ts = 0;
         config.update_count = 0;
         config.paused = false;
-        config.bump = *ctx
-            .bumps
-            .get("dynamic_config")
-            .ok_or(DynamicError::MathOverflow)?;
+        config.bump = ctx.bumps.dynamic_config;
 
         emit!(DynamicInitialized {
             mint: config.mint,

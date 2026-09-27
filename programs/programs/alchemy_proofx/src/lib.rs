@@ -148,11 +148,7 @@ pub mod alchemy_proofx {
         config.revocation_authority = revocation_authority;
         config.dispute_window_seconds = dispute_window_seconds;
         config.privacy_note_hash = privacy_note_hash;
-        config.bump = ctx
-            .bumps
-            .get("proofx_config")
-            .ok_or(ProofxError::MathOverflow)?
-            .to_owned();
+        config.bump = ctx.bumps.proofx_config;
 
         emit!(ProofxInitialized {
             mint: config.mint,
@@ -237,11 +233,7 @@ pub mod alchemy_proofx {
         record.amount = amount;
         record.created_ts = ctx.accounts.clock.unix_timestamp;
         record.revoked = false;
-        record.bump = ctx
-            .bumps
-            .get("claim_record")
-            .ok_or(ProofxError::MathOverflow)?
-            .to_owned();
+        record.bump = ctx.bumps.claim_record;
 
         emit!(AttestationMinted {
             mint: mint_key,
