@@ -95,12 +95,31 @@ go-ahead — no exceptions.
 
 ## PAXG policy (from `docs/research/paxg-solana.md`)
 
-- Paxos publishes **no official Solana mint address** for PAXG. A third-party
-  Solana mint exists but is **unverified** — never hardcode it, never treat it
-  as official.
-- Stage-3 vault work uses the unmistakably labeled `MOCK-GOLD` mock asset.
-- Real PAXG integration is stage-4, gated on Paxos publishing or confirming an
-  official Solana mint address.
+- Paxos launched PAXG natively on Solana on **June 25, 2026** (announced via
+  Paxos's official X account; onboarded through Sunrise DeFi; day-one trading
+  on Jupiter/Raydium/Kamino/Mayan). The native Solana mint is Token-2022:
+  `5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW`
+  (Solscan: https://solscan.io/token/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW).
+  Evidence chain is in the research memo: verified on Solana's token registry
+  (per Solflare), Jupiter-listed, and independently identified as Paxos's native
+  mint with the same compliance authority key as Paxos's PYUSD/USDGP mints.
+  Paxos's own site does not print the address — stage-4 integration stays gated
+  on direct Paxos confirmation through an official Paxos channel.
+- Do NOT confuse it with `C6oFsE8nXRDThzrMEQ5SxaNFGKoyyfWDDVPw37JKvPTe` — that is
+  **WPAXG**, a Wormhole-wrapped SPL token from June 2025, not the Paxos-issued
+  native mint. Never treat it as official PAXG.
+- The real PAXG mint carries a **permanent delegate** (plus confidential
+  transfers, mint close authority, 0 bps transfer fee) — an irrevocable seizure
+  power. Any future real-PAXG work must disclose this; never present the token
+  as permissionless. This is also the concrete real-world example for the
+  compat checker's red severity on permanent delegates.
+- Stage-3 vault work uses the unmistakably labeled `MOCK-GOLD` mock asset,
+  **strictly devnet-only**. Never label a devnet token "PAXG"; MOCK-GOLD must
+  never appear on mainnet.
+- Real PAXG integration is stage-4, mainnet-only, gated on (a) Paxos
+  confirmation of the mint, and (b) a threat model covering the
+  freeze/upgrade/permanent-delegate authorities and the 430-PAXG
+  physical-redemption minimum.
 
 ## Secrets
 

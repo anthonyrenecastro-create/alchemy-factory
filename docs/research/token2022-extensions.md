@@ -323,6 +323,16 @@ never-traded, program-managed containers (document the DEX exclusion).
   extensions (per a Sep-2026 Chainstack doc:
   https://github.com/chainstack/dev-portal/blob/HEAD/docs/solana-subscriptions-and-allowances.mdx) —
   the vault must decide *before* mainnet whether it accepts that shape.
+  **Stronger reference point (2026-09-27 correction): Paxos's own native Solana PAXG mint
+  `5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW` carries a permanent delegate, mint close
+  authority, an inactive transfer hook (null program id), 0 bps transfer fee, and confidential
+  transfers, with the same compliance authority key as Paxos's PYUSD/USDGP mints** (per a
+  Solana DeFi developer's on-chain analysis:
+  https://github.com/stabbleorg/anchor-common/commit/335539831d1f47a225871568db01067dd5fb7742;
+  Solscan: https://solscan.io/token/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW).
+  A "reject permanent delegate" default would therefore reject real PAXG itself — the
+  vault's mainnet policy must be an explicit allow-list decision for this exact mint,
+  with the seizure power disclosed to holders, not a blanket extension ban.
 
 ---
 

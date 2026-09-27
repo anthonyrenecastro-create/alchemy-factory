@@ -5,11 +5,24 @@ Delivery happens in four stages. For each stage this file states:
 **simulated** (frontend/SDK models, no chain state), **tested** (what evidence exists),
 and **incomplete** (what is not done). Claims never exceed evidence.
 
+## Verification standard (applies to every program in this repo)
+
+A Solana program is **UNVERIFIED** until **both** of these hold:
+
+1. **CI gate:** `anchor build` + `anchor test` pass on the exact commit (GitHub Actions).
+2. **Devnet end-to-end:** the program is deployed to devnet and a real transaction
+   exercising its instructions succeeds on devnet (not just a local validator).
+
+Until both gates pass, every UI surface, doc, and status line must describe the
+program as unverified / not yet confirmed on-chain. Passing CI alone is necessary
+but not sufficient. Skipping either gate and calling a program "done" or
+"production-ready" is not permitted in this project.
+
 ## Stage 1 — Functional devnet studio + holder app, one fully tested mechanic
 
 | Area | Status |
 |---|---|
-| On-chain | `alchemy_factory` registry + `alchemy_curve` (linear & step bonding-curve templates) deployed to **devnet** |
+| On-chain | `alchemy_factory` registry + `alchemy_curve` (linear & step bonding-curve templates) implemented. **UNVERIFIED**: not yet deployed to devnet and no end-to-end devnet transaction has succeeded — see the Verification standard above. Deployment needs explicit approval. |
 | Off-chain | Chainstack HTTPS/WSS RPC reads via server-side proxy; no indexer yet |
 | Simulated | Studio simulations for all five mechanics; cost estimates; holder views for unlisted mechanics |
 | Tested | Anchor tests: buy/sell math, fee accounting, slippage bounds, authority abuse (mint/freeze attempts by non-authority), rounding at curve steps, curve-manipulation (sandwich within one slot) |
@@ -19,7 +32,7 @@ and **incomplete** (what is not done). Claims never exceed evidence.
 
 | Area | Status |
 |---|---|
-| On-chain | `alchemy_decay`, `alchemy_dynamic`, `alchemy_vessel`, `alchemy_proofx` **implemented** (Anchor 0.31.1, Token-2022 only, no transfer hooks / permanent delegates); compiled and tested in CI. **Not yet deployed to devnet** — deployment needs explicit approval. |
+| On-chain | `alchemy_decay`, `alchemy_dynamic`, `alchemy_vessel`, `alchemy_proofx` **implemented** (Anchor 0.31.1, Token-2022 only, no transfer hooks / permanent delegates). **UNVERIFIED**: CI compilation/testing is running but not yet confirmed green, and no devnet deployment or end-to-end devnet transaction has happened — see the Verification standard above. **Not deployed to devnet** — deployment needs explicit approval. |
 | Off-chain | Compatibility checker (`sdk/src/compat.ts`): Token-2022 extension combination validated **before** mint creation against the research severity matrix (green/amber/red); red findings block the studio deploy step until explicitly acknowledged. Wallet/DEX notes carry vintage labels. |
 | Simulated | Full simulation coverage incl. stale-oracle, expiry, decay, attestation-replay scenarios; SDK math mirrors on-chain math exactly (decay period counting, dynamic update validation) |
 | Tested | Anchor tests add: stale oracle data rejection (incl. boundary semantics), proof replay rejection (nonce PDA), transfer-restriction declarations, vessel ownership-change safety + holding invariant, decay schedule correctness (expiry capping, tick math, recipient disclosure), authority abuse, rounding edges |
@@ -37,9 +50,9 @@ Honest scope notes for Stage 2 (what the programs do and do NOT do):
 |---|---|
 | On-chain | `alchemy_vault`: segregated vault, share accounting, withdrawal limits, read-only proof of balance/liabilities/ratio/authorities |
 | Off-chain | Price feed adapter for collateral valuation (labeled source, never implied decentralized) |
-| Simulated | Devnet uses an **unmistakably labeled mock asset** (`MOCK-GOLD`, never "PAXG") |
+| Simulated | Devnet uses an **unmistakably labeled mock asset** (`MOCK-GOLD`, never "PAXG"). MOCK-GOLD is strictly devnet-only: it must never appear on mainnet, and no devnet token may be labeled PAXG. |
 | Tested | Insolvency guard (`deposits >= claims` invariant), rounding on mint/redeem, withdrawal-limit preservation of solvency |
-| Incomplete | Real PAXG integration pending verification of the official Paxos Solana mint address |
+| Incomplete | Real PAXG integration. The native Solana PAXG mint is now identified (`5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW`, Token-2022, evidence chain in `docs/research/paxg-solana.md`) — but integration stays gated on (a) direct Paxos confirmation of the mint through an official Paxos channel, and (b) a threat model covering the mint's **permanent delegate** + freeze/upgrade authorities and the 430-PAXG physical-redemption minimum. Do not confuse it with `C6oFsE8nXRDThzrMEQ5SxaNFGKoyyfWDDVPw37JKvPTe`, which is **WPAXG** (Wormhole-wrapped, June 2025), not the Paxos-issued mint. |
 
 ## Stage 4 — Security review, real PAXG assessment, mainnet readiness report
 

@@ -8,6 +8,54 @@ Third-party mint addresses are labeled **UNVERIFIED** explicitly.
 
 ---
 
+## CORRECTION — 2026-09-27 (supersedes the "no official Solana mint" conclusion in A.1/A.3)
+
+Paxos launched PAXG natively on Solana on **June 25, 2026**, announced via Paxos's
+official X account and distributed through **Sunrise DeFi** (Wormhole's asset-onboarding
+pipeline), with day-one trading on Jupiter, Raydium, Kamino, and Mayan. The Solana
+deployment uses the **Token-2022** standard with compliance extensions.
+
+**Native Solana PAXG mint (Paxos-issued):** `5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW`
+- Solscan: https://solscan.io/token/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW
+- Evidence chain — no single paxos.com page prints the address, so this is a
+  convergence of independent sources, not a Paxos-published address:
+  - Solflare (wallet): *"The official Solana contract address for PAX Gold is
+    5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW"*, *"verified on Solana's token
+    registry"*
+    (https://www.solflare.com/prices/pax-gold/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW/, accessed 2026-09-27)
+  - Jupiter token page: https://jup.ag/tokens/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW (accessed 2026-09-27)
+  - Stabble (Solana DeFi developer, commit 2026-07-13): *"Paxos's native Solana PAXG
+    mint"*; its extension profile matches Paxos's PYUSD/USDGP mints with the same
+    compliance authority key
+    (https://github.com/stabbleorg/anchor-common/commit/335539831d1f47a225871568db01067dd5fb7742, accessed 2026-09-27)
+- **Extension profile of the native mint** (per the Stabble on-chain analysis):
+  permanent delegate, mint close authority, inactive transfer hook (null program id),
+  0 bps transfer fee, confidential transfers — same compliance authority key as Paxos's
+  PYUSD and USDG. **Project implication: real PAXG carries a permanent delegate — an
+  irrevocable seizure power. Any future real-PAXG vault integration must disclose this
+  and must never present the token as permissionless.** This is the concrete real-world
+  example behind the compat checker's red severity for permanent delegates.
+- The OTHER circulating address, `C6oFsE8nXRDThzrMEQ5SxaNFGKoyyfWDDVPw37JKvPTe`, is
+  **WPAXG** — a Wormhole-wrapped SPL token dated 2025-06-21 (a year *before* the native
+  launch), per CoinDesk's platforms table and Solscan's own "Paxos Gold (Wormhole)"
+  title. It is NOT the Paxos-issued native mint and must never be treated as such.
+
+**What this changes for Alchemy Factory:**
+- Stage 3 (devnet vault): **UNCHANGED** — still `MOCK-GOLD` only, strictly devnet.
+  There is no official PAXG on devnet, and no devnet token may be labeled PAXG.
+- Stage 4 (mainnet readiness): the "real PAXG assessment" now has a concrete candidate
+  mint with a verified-registry trail — but integration stays gated on (a) direct Paxos
+  confirmation of the mint address through an official Paxos channel, and (b) a threat
+  model accounting for the permanent delegate + freeze/upgrade authority and the
+  430-PAXG physical-redemption minimum.
+- June-2026 announcement coverage:
+  https://www.cryptotimes.io/2026/06/25/gold-goes-onchain-paxos-launches-paxg-on-solana/
+  and https://solanacompass.com/news/paxos-brings-pax-gold-to-solana-via-sunrise-making-paxg-the-first-occ-regulated-gold-token-on-the-network
+  (both accessed 2026-09-27); Paxos's own LinkedIn announcement:
+  https://www.linkedin.com/posts/paxos_paxg-is-now-live-on-solana-via-sunrise-defi-activity-7475915292259426304-A-W8
+
+---
+
 ## SECTION A — PAXG, from Paxos official documentation only
 
 Sources: [Paxos PAX Gold product page](https://paxos.com/PAXGold) (accessed 2026-09-27)
@@ -182,11 +230,16 @@ Evidence trail for this conclusion:
 1. **Devnet has no official PAXG at all.** The only native Solana PAXG deployment
    reported anywhere is on Solana *mainnet* (June 25, 2026, per third-party reports;
    see A.1). No devnet deployment exists in any source reviewed.
-2. **No Paxos-published Solana mint address exists.** The single mint address
-   circulating in third-party code (`5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW`) is
-   UNVERIFIED — Paxos has not published it on paxos.com, and the project's honesty
-   rules forbid treating it as official. Older "WPAXG" SPL tokens are unofficial
-   wrapped copies and must not be mistaken for the native mint.
+2. **Superseded by the 2026-09-27 CORRECTION above:** the native Solana PAXG mint is now
+   identified as `5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW` (Token-2022, verified on
+   Solana's token registry per Solflare, Jupiter-listed; Solscan:
+   https://solscan.io/token/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW). Paxos's own
+   site still does not print the address, so stage-4 integration remains gated on
+   direct Paxos confirmation. The mint's extension profile (permanent delegate,
+   confidential transfers, mint close authority — same compliance key as PYUSD/USDGP)
+   must be in the stage-4 threat model. Older "WPAXG" SPL tokens
+   (`C6oFsE8nXRDThzrMEQ5SxaNFGKoyyfWDDVPw37JKvPTe`) are unofficial wrapped copies and
+   must not be mistaken for the native mint.
 3. **Stage-3 is devnet-only by design** (see `../STAGES.md`): the plan already calls for
    an *unmistakably labeled mock asset* (`MOCK-GOLD`, never "PAXG"). This research
    confirms that plan is the only honest option — labeling any devnet token "PAXG"
@@ -224,3 +277,8 @@ stage-4's "real PAXG assessment" must record the mint as unverified.
 | 10 | https://www.securities.io/investing-in-pax-gold/ | Third-party — Sept 2026 fee-schedule change, unconfirmed |
 | 11 | https://www.newsbtc.com/altcoins/paxos-labs-launches-gold-token-that-can-earn-a-return-in-gold/ | Third-party news |
 | 12 | https://cryptobriefing.com/paxos-labs-launches-paxgy-gold-yield-token/ | Third-party news |
+| 13 | https://www.solflare.com/prices/pax-gold/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW/ | Wallet — "official Solana contract address", verified-registry claim |
+| 14 | https://jup.ag/tokens/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW | DEX aggregator — PAXG token page |
+| 15 | https://solscan.io/token/5GgRAEmv8ZxF2PR5hY72Qs5x1bnQ6UK2RbTPoqJ3wSwW | Explorer — native PAXG mint page |
+| 16 | https://solscan.io/token/C6oFsE8nXRDThzrMEQ5SxaNFGKoyyfWDDVPw37JKvPTe | Explorer — "Paxos Gold (Wormhole)" WPAXG page |
+| 17 | https://www.linkedin.com/posts/paxos_paxg-is-now-live-on-solana-via-sunrise-defi-activity-7475915292259426304-A-W8 | Paxos official — LinkedIn launch announcement |
