@@ -8,5 +8,5 @@ crate-type = ["cdylib", "lib"]
 name = "alchemy_curve"
 
 [dependencies]
-anchor-lang = "0.31.1"
+anchor-lang = { version = "0.31.1", features = ["init-if-needed"] }
 anchor-spl = { version = "0.31.1", features = ["token_2022"] }
