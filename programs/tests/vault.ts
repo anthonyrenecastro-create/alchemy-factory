@@ -111,7 +111,7 @@ describe("alchemy_vault", () => {
     const metadataValueLen = 32 + 32 + (4 + name.length) + (4 + symbol.length) + (4 + uri.length) + 4;
     const metadataTlvLen = TYPE_SIZE + LENGTH_SIZE + metadataValueLen;
     // Slack: Token-2022 tolerates a larger-than-minimum TLV region.
-    const space = getMintLen([ExtensionType.MetadataPointer, ExtensionType.TokenMetadata]) + metadataTlvLen + 64;
+    const space = getMintLen([ExtensionType.MetadataPointer]) + metadataTlvLen + 64;
     const lamports = await connection.getMinimumBalanceForRentExemption(space);
 
     // Raw token-metadata `initialize` instruction (discriminator =
