@@ -267,6 +267,10 @@ pub struct InitializeDynamic<'info> {
 #[derive(Accounts)]
 #[instruction(value: u64, source_ts: i64, source_hash: [u8; 32])]
 pub struct IngestUpdate<'info> {
+    // The update authority pays for the new UpdateRecord account, so the
+    // payer must be mutable (Anchor 0.31: "the payer specified for an init
+    // constraint must be mutable").
+    #[account(mut)]
     pub update_authority: Signer<'info>,
     #[account(
         mut,
