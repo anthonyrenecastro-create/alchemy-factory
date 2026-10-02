@@ -136,7 +136,7 @@ pub mod alchemy_proofx {
         // Anti-squatting: only the mint's current mint authority may publish
         // the config for it (see the doc comment on this instruction).
         require!(
-            ctx.accounts.mint.mint_authority == Some(ctx.accounts.mint_authority.key()),
+            ctx.accounts.mint.mint_authority == Some(ctx.accounts.mint_authority.key()).into(),
             ProofxError::InvalidMintAuthority
         );
 
@@ -204,7 +204,7 @@ pub mod alchemy_proofx {
         // The mint must be governed by this program: the proofx-config PDA
         // must be its mint authority.
         require!(
-            ctx.accounts.mint.mint_authority == Some(ctx.accounts.proofx_config.key()),
+            ctx.accounts.mint.mint_authority == Some(ctx.accounts.proofx_config.key()).into(),
             ProofxError::InvalidAttestation
         );
 
