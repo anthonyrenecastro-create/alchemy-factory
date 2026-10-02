@@ -320,7 +320,7 @@ pub struct InitializeProofx<'info> {
 }
 
 #[derive(Accounts)]
-#[instruction(nonce: u64)]
+#[instruction(attestation_hash: [u8; 32], nonce: u64, amount: u64)]
 pub struct MintFromAttestation<'info> {
     #[account(mut)]
     pub claimant: Signer<'info>,

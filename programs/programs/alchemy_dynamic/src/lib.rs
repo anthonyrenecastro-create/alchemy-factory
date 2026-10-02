@@ -246,7 +246,7 @@ pub mod alchemy_dynamic {
 // ---------------------------------------------------------------------------
 
 #[derive(Accounts)]
-#[instruction(data_source_name: String)]
+#[instruction(max_supply: u64, update_frequency_seconds: i64, stale_threshold_seconds: i64, data_source_name: String, oracle_adapter: Pubkey)]
 pub struct InitializeDynamic<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
