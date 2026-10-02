@@ -82,4 +82,9 @@ jobs:
         run: anchor build
       - name: Anchor tests (local validator)
         working-directory: programs
-        run: anchor test
+        run: |
+          # Throwaway local signer for the local validator's upgrade authority;
+          # CI must never hold a devnet/mainnet key.
+          mkdir -p ~/.config/solana
+          solana-keygen new --no-bip39-passphrase --force -o ~/.config/solana/id.json
+          anchor test --provider.cluster localnet
