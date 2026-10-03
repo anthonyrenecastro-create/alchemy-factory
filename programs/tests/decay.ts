@@ -41,9 +41,12 @@ describe("alchemy_decay", () => {
     await provider.connection.confirmTransaction(sig);
   });
 
-  /** Current chain unix time (seconds). */
+  /** Current chain unix time (seconds). Uses "confirmed" rather than
+   * "finalized": on the local validator the finalized block time can lag
+   * the chain clock by >10s, which made short-expiry fixtures already
+   * expired at init. */
   async function chainNow(): Promise<number> {
-    const slot = await provider.connection.getSlot("finalized");
+    const slot = await provider.connection.getSlot("confirmed");
     const t = await provider.connection.getBlockTime(slot);
     if (t === null) throw new Error("test bug: could not read chain time");
     return t;
@@ -351,7 +354,7 @@ describe("alchemy_decay", () => {
   it("caps decay at expiry and accrues nothing after", async () => {
     const now = await chainNow();
     const recipient = Keypair.generate().publicKey;
-    const expiry = now + 12;
+    const expiry = now + 30;
     const periodSeconds = 2;
     const decay = await initDecay({
       expiryTs: expiry,
@@ -413,7 +416,7 @@ describe("alchemy_decay", () => {
     });
     await expectAnchorError(doClose(early, recipient.publicKey), "NotExpired");
 
-    const expiry = now + 8;
+    const expiry = now + 30;
     const decay = await initDecay({
       expiryTs: expiry,
       decayBps: 100,
@@ -461,7 +464,7 @@ describe("alchemy_decay", () => {
     // schedule, stranding disclosure of the removed-value tail.
     const now = await chainNow();
     const recipient = Keypair.generate().publicKey;
-    const expiry = now + 8;
+    const expiry = now + 30;
     const decay = await initDecay({
       expiryTs: expiry,
       decayBps: 100,
@@ -503,7 +506,7 @@ describe("alchemy_decay", () => {
     const now = await chainNow();
     const recipient = Keypair.generate().publicKey;
     const impostor = Keypair.generate().publicKey;
-    const expiry = now + 8;
+    const expiry = now + 30;
     const decay = await initDecay({
       expiryTs: expiry,
       decayBps: 100,

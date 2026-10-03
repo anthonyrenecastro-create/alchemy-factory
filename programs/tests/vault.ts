@@ -24,8 +24,6 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   ExtensionType,
-  TYPE_SIZE,
-  LENGTH_SIZE,
   createAccount,
   createInitializeMetadataPointerInstruction,
   createInitializeMint2Instruction,
@@ -109,9 +107,14 @@ describe("alchemy_vault", () => {
     // 32 (update authority) + 32 (mint) + (4+9) name + (4+4) symbol +
     // (4+0) uri + 4 (empty additional_metadata vec).
     const metadataValueLen = 32 + 32 + (4 + name.length) + (4 + symbol.length) + (4 + uri.length) + 4;
-    const metadataTlvLen = TYPE_SIZE + LENGTH_SIZE + metadataValueLen;
-    // Slack: Token-2022 tolerates a larger-than-minimum TLV region.
-    const space = getMintLen([ExtensionType.MetadataPointer]) + metadataTlvLen + 64;
+    // TokenMetadata is variable-length: pass its value length through
+    // getMintLen's variableLengthExtensions map so the account size exactly
+    // matches Token-2022's expected layout. (An earlier `getMintLen([...,
+    // TokenMetadata])` threw in JS, and a hand-added +64 slack then made
+    // InitializeMint2 reject the oversized account with InvalidAccountData.)
+    const space = getMintLen([ExtensionType.MetadataPointer], {
+      [ExtensionType.TokenMetadata]: metadataValueLen,
+    });
     const lamports = await connection.getMinimumBalanceForRentExemption(space);
 
     // Raw token-metadata `initialize` instruction (discriminator =

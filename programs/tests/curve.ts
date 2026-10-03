@@ -105,6 +105,14 @@ describe("alchemy_curve", () => {
   }) {
     const mint = Keypair.generate();
     const treasury = Keypair.generate();
+    // Pre-fund the treasury above the rent-exempt minimum: fee transfers as
+    // small as a few hundred lamports would otherwise leave a fresh system
+    // account below rent and fail the whole transaction at simulation.
+    const treasurySig = await provider.connection.requestAirdrop(
+      treasury.publicKey,
+      LAMPORTS_PER_SOL,
+    );
+    await provider.connection.confirmTransaction(treasurySig);
     const [configPda] = PublicKey.findProgramAddressSync(
       [Buffer.from("curve"), mint.publicKey.toBuffer()],
       program.programId,
@@ -227,14 +235,16 @@ describe("alchemy_curve", () => {
   it("buys with exact hand-computed quote math (ceil against trader)", async () => {
     const curve = await initCurve({ curve: linearCurve(), feeBps: 100, maxSlippageBps: 10_000 });
 
-    // Hand computation: buy 10_000 base units @ supply 0.
-    // cost = 10_000*500 + 1e9*(0 + 10_000^2)/(2e9) = 5_000_000 + 50_000_000 = 55_000_000
-    // fee = ceil(55_000_000 * 100 / 10_000) = 550_000 ; total = 55_550_000
-    const amount = 10_000n;
+    // Hand computation: buy 1_000 base units @ supply 0.
+    // cost = 1_000*500 + 1e9*(0 + 1_000^2)/(2e9) = 500_000 + 500_000 = 1_000_000
+    // fee = ceil(1_000_000 * 100 / 10_000) = 10_000 ; total = 1_010_000
+    // (Trade size keeps the average price 1_000 vs spot 500, i.e. exactly
+    // the 10_000 bps impact rail — larger sizes breach it by construction.)
+    const amount = 1_000n;
     const cost = linearBuyCost(SLOPE, INTERCEPT, 0n, amount);
-    assert.strictEqual(cost, 55_000_000n, "hand-computed buy cost");
+    assert.strictEqual(cost, 1_000_000n, "hand-computed buy cost");
     const fee = feeFor(cost, FEE_BPS);
-    assert.strictEqual(fee, 550_000n, "hand-computed fee");
+    assert.strictEqual(fee, 10_000n, "hand-computed fee");
     const total = cost + fee;
 
     const vaultBefore = await solBalance(curve.vaultPda);
@@ -254,27 +264,27 @@ describe("alchemy_curve", () => {
 
   it("sells with exact hand-computed quote math (floor for the reserve)", async () => {
     const curve = await initCurve({ curve: linearCurve(), feeBps: 100, maxSlippageBps: 10_000 });
-    await doBuy(curve, null, 10_000n, 55_550_000n);
+    await doBuy(curve, null, 1_000n, 1_010_000n);
 
-    // Hand computation: sell 5_000 @ supply 10_000.
-    // proceeds = 5_000*500 + 1e9*(2*10_000*5_000 - 5_000^2)/(2e9)
-    //          = 2_500_000 + 37_500_000 = 40_000_000
-    // fee = 400_000 ; seller receives 39_600_000
-    const proceeds = linearSellProceeds(SLOPE, INTERCEPT, 10_000n, 5_000n);
-    assert.strictEqual(proceeds, 40_000_000n, "hand-computed sell proceeds");
+    // Hand computation: sell 500 @ supply 1_000.
+    // proceeds = 500*500 + 1e9*(2*1_000*500 - 500^2)/(2e9)
+    //          = 250_000 + 375_000 = 625_000
+    // fee = 6_250 ; seller receives 618_750
+    const proceeds = linearSellProceeds(SLOPE, INTERCEPT, 1_000n, 500n);
+    assert.strictEqual(proceeds, 625_000n, "hand-computed sell proceeds");
     const fee = feeFor(proceeds, FEE_BPS);
     const userGets = proceeds - fee;
-    assert.strictEqual(userGets, 39_600_000n, "hand-computed seller payout");
+    assert.strictEqual(userGets, 618_750n, "hand-computed seller payout");
 
     const vaultBefore = await solBalance(curve.vaultPda);
-    await doSell(curve, null, 5_000n, userGets);
+    await doSell(curve, null, 500n, userGets);
     const vaultAfter = await solBalance(curve.vaultPda);
 
-    assert.strictEqual(await tokenBalance(curve.mint.publicKey, payer), 5_000n);
+    assert.strictEqual(await tokenBalance(curve.mint.publicKey, payer), 500n);
     assert.strictEqual(vaultBefore - vaultAfter, proceeds, "reserve_delta == quote");
     const config: any = await fetchConfig(curve.configPda);
-    assert.strictEqual(BigInt(config.reserveLamports.toString()), 55_000_000n - proceeds);
-    assert.strictEqual(BigInt(config.totalFeesCollected.toString()), 550_000n + fee);
+    assert.strictEqual(BigInt(config.reserveLamports.toString()), 1_000_000n - proceeds);
+    assert.strictEqual(BigInt(config.totalFeesCollected.toString()), 10_000n + fee);
   });
 
   it("rejects invalid curves and fees at init", async () => {
@@ -519,7 +529,15 @@ describe("alchemy_curve", () => {
 
     // Full-redemption cover @ supply 3: 3*500 + floor(1e9*9/2e9) = 1_504.
     // Withdrawing 1 leaves 1_504 == cover: allowed.
-    const destination = Keypair.generate().publicKey;
+    // Pre-fund the destination above rent-exemption: a bare 1-lamport
+    // transfer to a fresh account would fail the transaction rent check.
+    const destinationKp = Keypair.generate();
+    const destSig = await provider.connection.requestAirdrop(
+      destinationKp.publicKey,
+      LAMPORTS_PER_SOL,
+    );
+    await provider.connection.confirmTransaction(destSig);
+    const destination = destinationKp.publicKey;
     await program.methods
       .withdrawReserve(bn(1))
       .accounts({

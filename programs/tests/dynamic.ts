@@ -403,6 +403,10 @@ describe("alchemy_dynamic", () => {
   it("rejects ingest from a non-authority", async () => {
     const dyn = await initDynamic({});
     const evil = Keypair.generate();
+    // Fund the signer: ingest inits the update_record PDA with the signer
+    // paying rent, so an unfunded signer dies on the system transfer
+    // before the program's Unauthorized check can surface.
+    await airdrop(evil.publicKey);
     await expectAnchorError(
       ingest(dyn, { value: 1n, sourceTs: nowSec() - 5, authority: evil }),
       "Unauthorized",
