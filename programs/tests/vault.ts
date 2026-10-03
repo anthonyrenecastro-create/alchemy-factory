@@ -714,7 +714,9 @@ describe("alchemy_vault", () => {
   it("publish_proof: anyone can publish; fields match on-chain state", async () => {
     const v = await initVault();
     const depositor = await newDepositor();
-    const depositorAccount = await fundTokenAccount(v.collateralMint, depositor.publicKey, 1_000_000n);
+    // Fund 1.5M: 1M is deposited; the remaining 500K funds the later
+    // direct-donation step below.
+    const depositorAccount = await fundTokenAccount(v.collateralMint, depositor.publicKey, 1_500_000n);
     await doDeposit(v, depositor, depositorAccount, 1_000_000n);
 
     const publisher = await newDepositor();
