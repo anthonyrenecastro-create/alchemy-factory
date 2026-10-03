@@ -216,12 +216,19 @@ pub mod alchemy_vault {
             .checked_add(metadata_len)
             .ok_or(VaultError::MathOverflow)?;
 
+        // Allocate ONLY the MetadataPointer space, but fund rent for the
+        // full layout. Pre-allocating the TokenMetadata region leaves zeros
+        // after the MetadataPointer TLV entry, and InitializeMint2's TLV
+        // parser rejects them (InvalidAccountData — observed in CI run 8,
+        // and in the test fixture before it). The token-metadata initialize
+        // CPI below reallocates the account from mint_len to share_space
+        // itself.
         invoke_signed(
             &system_instruction::create_account(
                 &authority_key,
                 &share_mint_pda,
                 ctx.accounts.rent.minimum_balance(share_space),
-                share_space as u64,
+                mint_len as u64,
                 &token_2022::ID,
             ),
             &[
