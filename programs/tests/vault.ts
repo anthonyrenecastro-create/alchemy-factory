@@ -260,7 +260,7 @@ describe("alchemy_vault", () => {
       funder,
       mint,
       owner,
-      undefined,
+      new Keypair(),
       undefined,
       TOKEN_2022_PROGRAM_ID,
     );
