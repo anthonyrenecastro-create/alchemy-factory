@@ -107,15 +107,17 @@ describe("alchemy_vault", () => {
     // 32 (update authority) + 32 (mint) + (4+9) name + (4+4) symbol +
     // (4+0) uri + 4 (empty additional_metadata vec).
     const metadataValueLen = 32 + 32 + (4 + name.length) + (4 + symbol.length) + (4 + uri.length) + 4;
-    // TokenMetadata is variable-length: pass its value length through
-    // getMintLen's variableLengthExtensions map so the account size exactly
-    // matches Token-2022's expected layout. (An earlier `getMintLen([...,
-    // TokenMetadata])` threw in JS, and a hand-added +64 slack then made
-    // InitializeMint2 reject the oversized account with InvalidAccountData.)
-    const space = getMintLen([ExtensionType.MetadataPointer], {
-      [ExtensionType.TokenMetadata]: metadataValueLen,
-    });
-    const lamports = await connection.getMinimumBalanceForRentExemption(space);
+    // Allocate ONLY the MetadataPointer space, but fund rent for the full
+    // layout. Pre-allocating the TokenMetadata region leaves zeros after the
+    // MetadataPointer TLV entry, and InitializeMint2's TLV parser rejects
+    // them (InvalidAccountData). The token-metadata initialize instruction
+    // reallocates the account from 234 to the full size itself.
+    const space = getMintLen([ExtensionType.MetadataPointer]);
+    const lamports = await connection.getMinimumBalanceForRentExemption(
+      getMintLen([ExtensionType.MetadataPointer], {
+        [ExtensionType.TokenMetadata]: metadataValueLen,
+      }),
+    );
 
     // Raw token-metadata `initialize` instruction (discriminator =
     // sha256("spl_token_metadata_interface:initialize_account")[0..8]).
